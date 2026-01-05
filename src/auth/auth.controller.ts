@@ -4,8 +4,10 @@ import {
   Post,
   Req,
   UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -21,9 +23,11 @@ interface AuthenticatedRequest extends Request {
 }
 
 @Controller('auth')
+@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) { }
 
+  @Throttle(3, 60)
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -39,6 +43,7 @@ export class AuthController {
     });
   }
 
+  @Throttle(5, 60)
   @Post('login')
   async login(
     @Body() dto: LoginDto,
@@ -52,11 +57,16 @@ export class AuthController {
     });
   }
 
+  @Throttle(10, 60)
   @Post('refresh')
   async refresh(
     @Body() dto: RefreshTokenDto,
     @Req() req: Request,
   ) {
+    if (!dto.refreshToken || dto.refreshToken.length < 64) {
+      throw new UnauthorizedException();
+    }
+
     return this.authService.refresh({
       refreshToken: dto.refreshToken,
       ipAddress: req.ip ?? 'unknown',
@@ -70,6 +80,8 @@ export class AuthController {
     return this.authService.logout({
       userId: req.user.userId,
       sessionId: req.user.sessionId,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
 }

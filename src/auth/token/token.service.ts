@@ -20,11 +20,17 @@ export class TokenService {
         role: string,
         sessionId: string,
     ): string {
-        return this.jwt.sign({
-            sub: userId,
-            role,
-            sessionId,
-        });
+        return this.jwt.sign(
+            {
+                sub: userId,
+                role,
+                sessionId,
+            },
+            {
+                issuer: 'auth-service',
+                audience: 'api',
+            },
+        );
     }
 
     async generateRefreshToken(params: {
@@ -81,10 +87,19 @@ export class TokenService {
         const existingToken =
             await this.prisma.refreshToken.findUnique({
                 where: { tokenHash },
+                include: { session: true },
             });
 
         if (!existingToken) {
             throw new ForbiddenException('Invalid refresh token');
+        }
+
+        if (existingToken.session.expiresAt < new Date()) {
+            await this.invalidateSession(
+                existingToken.sessionId,
+                'SESSION_EXPIRED',
+            );
+            throw new ForbiddenException('Session expired');
         }
 
         if (existingToken.isRevoked) {
@@ -92,6 +107,18 @@ export class TokenService {
                 existingToken.sessionId,
                 'TOKEN_REUSE_DETECTED',
             );
+
+            await this.prisma.securityEvent.create({
+                data: {
+                    userId: existingToken.userId,
+                    eventType: 'TOKEN_REUSE_DETECTED',
+                    severity: 'CRITICAL',
+                    description: 'Refresh token reuse detected',
+                    ipAddress: params.ipAddress,
+                    userAgent: params.userAgent,
+                },
+            });
+
             throw new ForbiddenException(
                 'Refresh token reuse detected',
             );
@@ -105,9 +132,7 @@ export class TokenService {
                     revokedAt: new Date(),
                 },
             });
-            throw new ForbiddenException(
-                'Refresh token expired',
-            );
+            throw new ForbiddenException('Refresh token expired');
         }
 
         await this.prisma.refreshToken.update({
@@ -138,6 +163,14 @@ export class TokenService {
         sessionId: string,
         reason: string,
     ) {
+        const session = await this.prisma.session.findUnique({
+            where: { id: sessionId },
+        });
+
+        if (!session || session.expiresAt < new Date()) {
+            return;
+        }
+
         await this.prisma.session.updateMany({
             where: { id: sessionId, isActive: true },
             data: {
@@ -164,16 +197,16 @@ export class TokenService {
     }
 
     private parseTtl(ttl: string): number {
-        const value = Number.parseInt(ttl, 10);
-
-        if (Number.isNaN(value)) {
+        if (!/^\d+(d|h|m)$/.test(ttl)) {
             throw new Error(`Invalid JWT_REFRESH_TTL: ${ttl}`);
         }
+
+        const value = Number.parseInt(ttl, 10);
 
         if (ttl.endsWith('d')) return value * 86400000;
         if (ttl.endsWith('h')) return value * 3600000;
         if (ttl.endsWith('m')) return value * 60000;
 
-        return value * 1000;
+        throw new Error(`Invalid JWT_REFRESH_TTL: ${ttl}`);
     }
 }

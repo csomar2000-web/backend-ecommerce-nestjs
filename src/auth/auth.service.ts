@@ -36,6 +36,14 @@ export class AuthService {
             throw new BadRequestException('Passwords do not match');
         }
 
+        if (
+            !/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}/.test(
+                password,
+            )
+        ) {
+            throw new BadRequestException('Weak password');
+        }
+
         const existingUser = await this.prisma.user.findUnique({
             where: { email },
         });
@@ -91,6 +99,17 @@ export class AuthService {
                 userAgent,
             });
 
+        await this.prisma.userAuditLog.create({
+            data: {
+                userId: user.id,
+                eventType: 'AUTH',
+                eventAction: 'REGISTER',
+                ipAddress,
+                userAgent,
+                success: true,
+            },
+        });
+
         return { accessToken, refreshToken };
     }
 
@@ -120,6 +139,16 @@ export class AuthService {
         );
 
         if (!passwordValid) {
+            await this.prisma.securityEvent.create({
+                data: {
+                    email,
+                    eventType: 'FAILED_LOGIN',
+                    severity: 'MEDIUM',
+                    description: 'Invalid password',
+                    ipAddress,
+                    userAgent,
+                },
+            });
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -149,6 +178,17 @@ export class AuthService {
                 userAgent,
             });
 
+        await this.prisma.userAuditLog.create({
+            data: {
+                userId: account.user.id,
+                eventType: 'AUTH',
+                eventAction: 'LOGIN',
+                ipAddress,
+                userAgent,
+                success: true,
+            },
+        });
+
         return { accessToken, refreshToken };
     }
 
@@ -157,16 +197,14 @@ export class AuthService {
         ipAddress: string;
         userAgent: string;
     }) {
-        const { refreshToken, ipAddress, userAgent } = params;
-
         const {
             userId,
             sessionId,
             refreshToken: newRefreshToken,
         } = await this.tokenService.rotateRefreshToken({
-            refreshToken,
-            ipAddress,
-            userAgent,
+            refreshToken: params.refreshToken,
+            ipAddress: params.ipAddress,
+            userAgent: params.userAgent,
         });
 
         const session = await this.prisma.session.findFirst({
@@ -176,7 +214,7 @@ export class AuthService {
             },
         });
 
-        if (!session) {
+        if (!session || session.expiresAt < new Date()) {
             throw new UnauthorizedException('Session invalid');
         }
 
@@ -187,6 +225,17 @@ export class AuthService {
                 sessionId,
             );
 
+        await this.prisma.userAuditLog.create({
+            data: {
+                userId,
+                eventType: 'AUTH',
+                eventAction: 'REFRESH',
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+                success: true,
+            },
+        });
+
         return {
             accessToken,
             refreshToken: newRefreshToken,
@@ -196,13 +245,24 @@ export class AuthService {
     async logout(params: {
         userId: string;
         sessionId: string;
+        ipAddress?: string;
+        userAgent?: string;
     }) {
-        const { sessionId } = params;
-
         await this.tokenService.invalidateSession(
-            sessionId,
+            params.sessionId,
             'USER_LOGOUT',
         );
+
+        await this.prisma.userAuditLog.create({
+            data: {
+                userId: params.userId,
+                eventType: 'AUTH',
+                eventAction: 'LOGOUT',
+                ipAddress: params.ipAddress ?? 'unknown',
+                userAgent: params.userAgent ?? 'unknown',
+                success: true,
+            },
+        });
 
         return { success: true };
     }
