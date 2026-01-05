@@ -1,20 +1,35 @@
-// src/auth/auth.controller.ts
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import type { Request } from 'express';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+    constructor(private readonly authService: AuthService) { }
 
-  @Post('register')
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto.email, dto.password);
-  }
+    @Post('register')
+    async register(
+        @Body() dto: RegisterDto,
+        @Req() req: Request,
+    ) {
+        return this.authService.register({
+            email: dto.email,
+            password: dto.password,
+            confirmPassword: dto.confirmPassword,
+            phoneNumber: dto.phoneNumber,
+            ipAddress: req.ip ?? 'unknown',
+            userAgent: req.headers['user-agent'] ?? 'unknown',
+        });
+    }
 
-  @Post('login')
-  async login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.email, dto.password);
-  }
+    @Post('login')
+    async login(@Body() dto: LoginDto, @Req() req: Request) {
+        return this.authService.login({
+            email: dto.email,
+            password: dto.password,
+            ipAddress: req.ip ?? 'unknown',
+            userAgent: req.headers['user-agent'] ?? 'unknown',
+        });
+    }
 }
