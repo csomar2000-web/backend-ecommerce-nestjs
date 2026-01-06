@@ -451,13 +451,8 @@ model TokenBlacklist {
 }
 
 enum AuthProvider {
-  LOCAL
   GOOGLE
   FACEBOOK
-  APPLE
-  GITHUB
-  MICROSOFT
-  TWITTER
 }
 
 enum CompanyStatus {
