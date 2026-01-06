@@ -13,7 +13,7 @@ export class SessionsDevicesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokenService: TokenService,
-  ) {}
+  ) { }
 
   async createSession(params: {
     userId: string;
@@ -23,27 +23,21 @@ export class SessionsDevicesService {
     deviceName?: string;
   }) {
     const activeSessions = await this.prisma.session.count({
-      where: {
-        userId: params.userId,
-        isActive: true,
-      },
+      where: { userId: params.userId, isActive: true },
     });
 
     if (activeSessions >= MAX_ACTIVE_SESSIONS) {
       const oldestSession = await this.prisma.session.findFirst({
-        where: {
-          userId: params.userId,
-          isActive: true,
-        },
+        where: { userId: params.userId, isActive: true },
         orderBy: { createdAt: 'asc' },
       });
 
       if (oldestSession) {
-        await this.invalidateSession(
-          params.userId,
-          oldestSession.id,
-          'SESSION_LIMIT_REACHED',
-        );
+        await this.invalidateSession({
+          userId: params.userId,
+          sessionId: oldestSession.id,
+          reason: 'SESSION_LIMIT_REACHED',
+        });
       }
     }
 
@@ -63,12 +57,8 @@ export class SessionsDevicesService {
 
   async listSessions(userId: string) {
     return this.prisma.session.findMany({
-      where: {
-        userId,
-      },
-      orderBy: {
-        lastActivityAt: 'desc',
-      },
+      where: { userId },
+      orderBy: { lastActivityAt: 'desc' },
       select: {
         id: true,
         ipAddress: true,
@@ -86,6 +76,7 @@ export class SessionsDevicesService {
   async revokeSession(params: {
     userId: string;
     sessionId: string;
+    accessToken: string;
   }) {
     const session = await this.prisma.session.findFirst({
       where: {
@@ -99,11 +90,16 @@ export class SessionsDevicesService {
       throw new ForbiddenException();
     }
 
-    await this.invalidateSession(
-      params.userId,
-      params.sessionId,
+    await this.tokenService.blacklistAccessTokenFromJwt(
+      params.accessToken,
       'USER_REVOKED_SESSION',
     );
+
+    await this.invalidateSession({
+      userId: params.userId,
+      sessionId: params.sessionId,
+      reason: 'USER_REVOKED_SESSION',
+    });
 
     return { success: true };
   }
@@ -111,56 +107,71 @@ export class SessionsDevicesService {
   async logoutCurrentSession(params: {
     userId: string;
     sessionId: string;
+    accessToken: string;
   }) {
-    await this.invalidateSession(
-      params.userId,
-      params.sessionId,
+    await this.tokenService.blacklistAccessTokenFromJwt(
+      params.accessToken,
       'USER_LOGOUT',
     );
+
+    await this.invalidateSession({
+      userId: params.userId,
+      sessionId: params.sessionId,
+      reason: 'USER_LOGOUT',
+    });
 
     return { success: true };
   }
 
-  async logoutAllSessions(userId: string) {
+  async logoutAllSessions(params: {
+    userId: string;
+    accessToken: string;
+  }) {
+    await this.tokenService.blacklistAccessTokenFromJwt(
+      params.accessToken,
+      'USER_LOGOUT_ALL',
+    );
+
     const sessions = await this.prisma.session.findMany({
       where: {
-        userId,
+        userId: params.userId,
         isActive: true,
       },
       select: { id: true },
     });
 
     for (const session of sessions) {
-      await this.invalidateSession(
-        userId,
-        session.id,
-        'USER_LOGOUT_ALL',
-      );
+      await this.invalidateSession({
+        userId: params.userId,
+        sessionId: session.id,
+        reason: 'USER_LOGOUT_ALL',
+      });
     }
 
     return { success: true };
   }
 
-  private async invalidateSession(
-    userId: string,
-    sessionId: string,
-    reason: string,
-  ) {
+
+  private async invalidateSession(params: {
+    userId: string;
+    sessionId: string;
+    reason: string;
+  }) {
     await this.tokenService.invalidateSession(
-      sessionId,
-      reason,
+      params.sessionId,
+      params.reason,
     );
 
     await this.prisma.userAuditLog.create({
       data: {
-        userId,
+        userId: params.userId,
         eventType: 'AUTH',
         eventAction: 'SESSION_INVALIDATED',
-        sessionId,
+        sessionId: params.sessionId,
         ipAddress: 'unknown',
         userAgent: 'unknown',
         success: true,
-        metadata: { reason },
+        metadata: { reason: params.reason },
       },
     });
   }

@@ -17,9 +17,9 @@ export class AuthService {
     private readonly authorization: AuthorizationService,
     private readonly security: SecurityAbuseService,
     private readonly audit: AuditObservabilityService,
-  ) {}
+  ) { }
 
-  register(dto) {
+  register(dto: any) {
     return this.accountIdentity.register(dto);
   }
 
@@ -31,7 +31,7 @@ export class AuthService {
     return this.accountIdentity.resendVerification(email);
   }
 
-  async login(dto) {
+  async login(dto: any) {
     await this.security.assertLoginAllowed({
       identifier: dto.email,
     });
@@ -40,37 +40,41 @@ export class AuthService {
       const result = await this.credentials.login(dto);
       await this.security.clearLoginFailures(dto.email);
       return result;
-    } catch (e) {
+    } catch (error) {
       await this.security.recordFailedLogin({
         identifier: dto.email,
         ipAddress: dto.ipAddress,
         userAgent: dto.userAgent,
       });
-      throw e;
+      throw error;
     }
   }
 
-  refresh(dto) {
+  refresh(dto: any) {
     return this.tokens.refreshTokens(dto);
   }
 
-  logout(dto) {
+  logout(dto: {
+    userId: string;
+    sessionId: string;
+    accessToken: string;
+  }) {
     return this.sessions.logoutCurrentSession(dto);
   }
 
-  logoutAll(dto) {
-    return this.sessions.logoutAllSessions(dto.userId);
+  logoutAll(dto: { userId: string; accessToken: string }) {
+    return this.sessions.logoutAllSessions(dto);
   }
 
-  requestPasswordReset(dto) {
+  requestPasswordReset(dto: any) {
     return this.credentials.requestPasswordReset(dto);
   }
 
-  confirmPasswordReset(dto) {
+  confirmPasswordReset(dto: any) {
     return this.credentials.confirmPasswordReset(dto);
   }
 
-  changePassword(dto) {
+  changePassword(dto: any) {
     return this.credentials.changePassword(dto);
   }
 
@@ -78,7 +82,11 @@ export class AuthService {
     return this.sessions.listSessions(userId);
   }
 
-  revokeSession(dto) {
+  revokeSession(dto: {
+    userId: string;
+    sessionId: string;
+    accessToken: string;
+  }) {
     return this.sessions.revokeSession(dto);
   }
 }

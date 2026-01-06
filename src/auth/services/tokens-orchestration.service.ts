@@ -11,7 +11,11 @@ export class TokensOrchestrationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokenService: TokenService,
-  ) {}
+  ) { }
+
+  /* ------------------------------------------------------------------
+   * ISSUE TOKENS
+   * ------------------------------------------------------------------ */
 
   async issueTokens(params: {
     userId: string;
@@ -37,12 +41,16 @@ export class TokensOrchestrationService {
     return { accessToken, refreshToken };
   }
 
+  /* ------------------------------------------------------------------
+   * REFRESH TOKENS
+   * ------------------------------------------------------------------ */
+
   async refreshTokens(params: {
     refreshToken: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    const rotationResult =
+    const rotation =
       await this.tokenService.rotateRefreshToken({
         refreshToken: params.refreshToken,
         ipAddress: params.ipAddress,
@@ -51,37 +59,37 @@ export class TokensOrchestrationService {
 
     const session = await this.prisma.session.findFirst({
       where: {
-        id: rotationResult.sessionId,
+        id: rotation.sessionId,
         isActive: true,
+        expiresAt: { gt: new Date() },
       },
     });
 
-    if (!session || session.expiresAt <= new Date()) {
+    if (!session) {
       throw new UnauthorizedException('Session invalid');
     }
 
     const roleAssignment =
       await this.prisma.userRoleAssignment.findFirst({
         where: {
-          userId: rotationResult.userId,
+          userId: rotation.userId,
           isActive: true,
         },
         include: { role: true },
       });
 
-    const accessToken =
-      this.tokenService.generateAccessToken(
-        rotationResult.userId,
-        roleAssignment?.role.name ?? 'CUSTOMER',
-        rotationResult.sessionId,
-      );
+    const accessToken = this.tokenService.generateAccessToken(
+      rotation.userId,
+      roleAssignment?.role.name ?? 'CUSTOMER',
+      rotation.sessionId,
+    );
 
     await this.prisma.userAuditLog.create({
       data: {
-        userId: rotationResult.userId,
+        userId: rotation.userId,
         eventType: 'AUTH',
-        eventAction: 'REFRESH',
-        sessionId: rotationResult.sessionId,
+        eventAction: 'TOKEN_REFRESH',
+        sessionId: rotation.sessionId,
         ipAddress: params.ipAddress,
         userAgent: params.userAgent,
         success: true,
@@ -90,9 +98,13 @@ export class TokensOrchestrationService {
 
     return {
       accessToken,
-      refreshToken: rotationResult.refreshToken,
+      refreshToken: rotation.refreshToken,
     };
   }
+
+  /* ------------------------------------------------------------------
+   * REVOKE SESSION
+   * ------------------------------------------------------------------ */
 
   async revokeSession(params: {
     userId: string;
@@ -110,6 +122,8 @@ export class TokensOrchestrationService {
         eventType: 'AUTH',
         eventAction: 'TOKEN_REVOKE',
         sessionId: params.sessionId,
+        ipAddress: 'unknown',
+        userAgent: 'unknown',
         success: true,
         metadata: { reason: params.reason },
       },
@@ -117,6 +131,10 @@ export class TokensOrchestrationService {
 
     return { success: true };
   }
+
+  /* ------------------------------------------------------------------
+   * REVOKE ALL SESSIONS
+   * ------------------------------------------------------------------ */
 
   async revokeAllSessions(params: {
     userId: string;
@@ -142,6 +160,8 @@ export class TokensOrchestrationService {
         userId: params.userId,
         eventType: 'AUTH',
         eventAction: 'TOKEN_REVOKE_ALL',
+        ipAddress: 'unknown',
+        userAgent: 'unknown',
         success: true,
         metadata: { reason: params.reason },
       },
@@ -150,19 +170,19 @@ export class TokensOrchestrationService {
     return { success: true };
   }
 
+  /* ------------------------------------------------------------------
+   * MAINTENANCE
+   * ------------------------------------------------------------------ */
+
   async cleanupExpiredTokens() {
     const now = new Date();
 
     await this.prisma.refreshToken.deleteMany({
-      where: {
-        expiresAt: { lt: now },
-      },
+      where: { expiresAt: { lt: now } },
     });
 
     await this.prisma.session.updateMany({
-      where: {
-        expiresAt: { lt: now },
-      },
+      where: { expiresAt: { lt: now } },
       data: {
         isActive: false,
         invalidatedAt: now,
@@ -172,6 +192,10 @@ export class TokensOrchestrationService {
 
     return { success: true };
   }
+
+  /* ------------------------------------------------------------------
+   * BLACKLIST CHECK
+   * ------------------------------------------------------------------ */
 
   async detectBlacklistedAccessToken(tokenHash: string) {
     const record = await this.prisma.tokenBlacklist.findUnique({
