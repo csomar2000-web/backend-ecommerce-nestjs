@@ -8,7 +8,6 @@ import type { StringValue } from 'ms';
   imports: [
     ConfigModule,
     JwtModule.registerAsync({
-      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow<string>('JWT_ACCESS_SECRET'),
@@ -23,4 +22,4 @@ import type { StringValue } from 'ms';
   providers: [TokenService],
   exports: [TokenService],
 })
-export class TokenModule { }
+export class TokenModule {}
