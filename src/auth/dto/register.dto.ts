@@ -2,8 +2,7 @@ import {
   IsEmail,
   IsString,
   MinLength,
-  MaxLength,
-  IsPhoneNumber,
+  Matches,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -12,14 +11,12 @@ export class RegisterDto {
 
   @IsString()
   @MinLength(12)
-  @MaxLength(128)
+  @Matches(/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9])/)
   password: string;
 
   @IsString()
-  @MinLength(12)
-  @MaxLength(128)
   confirmPassword: string;
 
-  @IsPhoneNumber(undefined)
+  @IsString()
   phoneNumber: string;
 }
