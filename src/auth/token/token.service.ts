@@ -20,13 +20,15 @@ export class TokenService {
         role: string,
         sessionId: string,
     ): string {
+        const jti = crypto.randomUUID();
+
         return this.jwt.sign({
             sub: userId,
             role,
             sessionId,
+            jti,
         });
     }
-
 
     async generateRefreshToken(params: {
         userId: string;
@@ -68,7 +70,6 @@ export class TokenService {
         return { refreshToken: rawToken };
     }
 
-
     async rotateRefreshToken(params: {
         refreshToken: string;
         ipAddress: string;
@@ -89,6 +90,7 @@ export class TokenService {
         if (!existingToken) {
             throw new ForbiddenException('Invalid refresh token');
         }
+
         if (existingToken.session.expiresAt <= new Date()) {
             await this.invalidateSession(
                 existingToken.sessionId,
@@ -128,6 +130,7 @@ export class TokenService {
 
             throw new ForbiddenException('Refresh token expired');
         }
+
         await this.prisma.refreshToken.update({
             where: { id: existingToken.id },
             data: {
@@ -135,6 +138,7 @@ export class TokenService {
                 revokedAt: new Date(),
             },
         });
+
         const { refreshToken } =
             await this.generateRefreshToken({
                 userId: existingToken.userId,
@@ -181,6 +185,17 @@ export class TokenService {
         });
     }
 
+    async isAccessTokenBlacklisted(
+        jti: string,
+    ): Promise<boolean> {
+        const record =
+            await this.prisma.tokenBlacklist.findUnique({
+                where: { tokenHash: jti },
+            });
+
+        return !!record && record.expiresAt > new Date();
+    }
+
     async cleanupExpiredAuthData(): Promise<void> {
         const now = new Date();
 
@@ -191,8 +206,11 @@ export class TokenService {
         await this.prisma.session.deleteMany({
             where: { expiresAt: { lt: now } },
         });
-    }
 
+        await this.prisma.tokenBlacklist.deleteMany({
+            where: { expiresAt: { lt: now } },
+        });
+    }
 
     private hashToken(token: string): string {
         return crypto
@@ -203,7 +221,7 @@ export class TokenService {
 
     private parseTtl(ttl: string): number {
         if (!/^\d+(d|h|m)$/.test(ttl)) {
-            throw new Error(`Invalid JWT_REFRESH_TTL: ${ttl}`);
+            throw new Error(`Invalid TTL: ${ttl}`);
         }
 
         const value = Number.parseInt(ttl, 10);
@@ -212,6 +230,6 @@ export class TokenService {
         if (ttl.endsWith('h')) return value * 3600000;
         if (ttl.endsWith('m')) return value * 60000;
 
-        throw new Error(`Invalid JWT_REFRESH_TTL: ${ttl}`);
+        throw new Error(`Invalid TTL: ${ttl}`);
     }
 }

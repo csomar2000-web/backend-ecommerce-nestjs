@@ -8,11 +8,18 @@ const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MINUTES = 15;
 const BLOCK_MINUTES = 30;
 
+const SENSITIVE_LIMIT = 3;
+const SENSITIVE_WINDOW_MINUTES = 60;
+
+type SensitiveActionType =
+  | 'PASSWORD_RESET'
+  | 'EMAIL_VERIFICATION';
+
 @Injectable()
 export class SecurityAbuseService {
   constructor(
     private readonly prisma: PrismaService,
-  ) {}
+  ) { }
 
   async assertLoginAllowed(params: {
     identifier: string;
@@ -92,19 +99,18 @@ export class SecurityAbuseService {
 
   async blockIdentifier(identifier: string) {
     const now = new Date();
+    const blockedUntil = new Date(
+      now.getTime() + BLOCK_MINUTES * 60 * 1000,
+    );
 
     await this.prisma.rateLimit.create({
       data: {
         identifier,
         limitType: 'LOGIN_BLOCK',
         windowStart: now,
-        windowEnd: new Date(
-          now.getTime() + BLOCK_MINUTES * 60 * 1000,
-        ),
+        windowEnd: blockedUntil,
         isBlocked: true,
-        blockedUntil: new Date(
-          now.getTime() + BLOCK_MINUTES * 60 * 1000,
-        ),
+        blockedUntil,
       },
     });
 
@@ -133,5 +139,41 @@ export class SecurityAbuseService {
         blockedUntil: null,
       },
     });
+  }
+
+  async assertSensitiveActionAllowed(params: {
+    identifier: string;
+    type: SensitiveActionType;
+  }) {
+    const now = new Date();
+
+    const windowStart = new Date(
+      now.getTime() - SENSITIVE_WINDOW_MINUTES * 60 * 1000,
+    );
+
+    const attempts = await this.prisma.rateLimit.count({
+      where: {
+        identifier: params.identifier,
+        limitType: params.type,
+        windowStart: { gte: windowStart },
+      },
+    });
+
+    if (attempts >= SENSITIVE_LIMIT) {
+      throw new ForbiddenException('Too many requests');
+    }
+
+    await this.prisma.rateLimit.create({
+      data: {
+        identifier: params.identifier,
+        limitType: params.type,
+        windowStart: now,
+        windowEnd: new Date(
+          now.getTime() + SENSITIVE_WINDOW_MINUTES * 60 * 1000,
+        ),
+      },
+    });
+
+    return true;
   }
 }

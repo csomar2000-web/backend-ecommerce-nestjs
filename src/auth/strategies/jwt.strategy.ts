@@ -6,17 +6,18 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TokenService } from '../token/token.service';
 
 export interface JwtPayload {
-  sub: string;   
-  role: string;       
-  sessionId: string;  
+  sub: string;
+  role: string;
+  sessionId: string;
+  jti: string;
   iat: number;
   exp: number;
   iss: string;
   aud: string;
 }
-
 
 export interface AuthenticatedUser {
   userId: string;
@@ -29,6 +30,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly tokenService: TokenService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -36,13 +38,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       issuer: 'auth-service',
       audience: 'api',
       ignoreExpiration: false,
-      passReqToCallback: false,
     });
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    if (!payload?.sub || !payload?.sessionId) {
+    if (!payload?.sub || !payload?.sessionId || !payload?.jti) {
       throw new UnauthorizedException('Invalid token payload');
+    }
+
+    const isBlacklisted =
+      await this.tokenService.isAccessTokenBlacklisted(payload.jti);
+
+    if (isBlacklisted) {
+      throw new UnauthorizedException('Token revoked');
     }
 
     const session = await this.prisma.session.findFirst({

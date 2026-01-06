@@ -451,9 +451,11 @@ model TokenBlacklist {
 }
 
 enum AuthProvider {
+  LOCAL
   GOOGLE
   FACEBOOK
 }
+
 
 enum CompanyStatus {
   PENDING

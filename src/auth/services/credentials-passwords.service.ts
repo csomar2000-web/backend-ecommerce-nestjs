@@ -6,11 +6,13 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token/token.service';
+import { SessionsDevicesService } from './sessions-devices.service';
+import { SecurityAbuseService } from './security-abuse.service';
+import { MailService } from '../../mail/mail.service';
+import { AuthProvider } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_WINDOW_MINUTES = 15;
 const RESET_TOKEN_TTL_HOURS = 1;
 
 @Injectable()
@@ -18,6 +20,9 @@ export class CredentialsPasswordsService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: TokenService,
+        private readonly sessions: SessionsDevicesService,
+        private readonly abuse: SecurityAbuseService,
+        private readonly mail: MailService,
     ) { }
 
     async login(params: {
@@ -25,34 +30,29 @@ export class CredentialsPasswordsService {
         password: string;
         ipAddress: string;
         userAgent: string;
+        deviceId?: string;
+        deviceName?: string;
     }) {
         const { email, password, ipAddress, userAgent } = params;
 
-        const recentFailures = await this.prisma.securityEvent.count({
-            where: {
-                email,
-                eventType: 'FAILED_LOGIN',
-                createdAt: {
-                    gte: new Date(
-                        Date.now() - LOCKOUT_WINDOW_MINUTES * 60 * 1000,
-                    ),
-                },
-            },
-        });
-
-        if (recentFailures >= MAX_FAILED_ATTEMPTS) {
-            throw new ForbiddenException('Account temporarily locked');
-        }
+        await this.abuse.assertLoginAllowed({ identifier: email });
 
         const account = await this.prisma.authAccount.findFirst({
             where: {
-                provider: 'LOCAL',
+                provider: AuthProvider.LOCAL,
                 user: { email },
             },
-            include: { user: true },
+            include: {
+                user: true,
+            },
         });
 
         if (!account || !account.passwordHash) {
+            await this.abuse.recordFailedLogin({
+                identifier: email,
+                ipAddress,
+                userAgent,
+            });
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -60,60 +60,44 @@ export class CredentialsPasswordsService {
             throw new ForbiddenException('Email not verified');
         }
 
-        const passwordValid = await bcrypt.compare(
-            password,
-            account.passwordHash,
-        );
+        const valid = await bcrypt.compare(password, account.passwordHash);
 
-        if (!passwordValid) {
-            await this.prisma.securityEvent.create({
-                data: {
-                    email,
-                    eventType: 'FAILED_LOGIN',
-                    severity: 'MEDIUM',
-                    description: 'Invalid password',
-                    ipAddress,
-                    userAgent,
-                },
+        if (!valid) {
+            await this.abuse.recordFailedLogin({
+                identifier: email,
+                ipAddress,
+                userAgent,
             });
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        const session = await this.prisma.session.create({
-            data: {
-                userId: account.user.id,
-                ipAddress,
-                userAgent,
-                expiresAt: new Date(
-                    Date.now() + 1000 * 60 * 60 * 24 * 30,
-                ),
-            },
+        await this.abuse.clearLoginFailures(email);
+
+        const session = await this.sessions.createSession({
+            userId: account.user.id,
+            ipAddress,
+            userAgent,
+            deviceId: params.deviceId,
+            deviceName: params.deviceName,
         });
 
-        const accessToken =
-            this.tokenService.generateAccessToken(
-                account.user.id,
-                account.user.roleAssignments?.[0]?.roleId ?? 'CUSTOMER',
-                session.id,
-            );
+        const accessToken = this.tokenService.generateAccessToken(
+            account.user.id,
+            'CUSTOMER',
+            session.id,
+        );
 
-        const { refreshToken } =
-            await this.tokenService.generateRefreshToken({
-                userId: account.user.id,
-                sessionId: session.id,
-                ipAddress,
-                userAgent,
-            });
+        const { refreshToken } = await this.tokenService.generateRefreshToken({
+            userId: account.user.id,
+            sessionId: session.id,
+            ipAddress,
+            userAgent,
+        });
 
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: account.user.id,
-                eventType: 'AUTH',
-                eventAction: 'LOGIN',
-                ipAddress,
-                userAgent,
-                success: true,
-            },
+        await this.mail.sendSecurityAlert(account.user.email, {
+            type: 'NEW_DEVICE_LOGIN',
+            ipAddress,
+            userAgent,
         });
 
         return { accessToken, refreshToken };
@@ -124,6 +108,11 @@ export class CredentialsPasswordsService {
         ipAddress: string;
         userAgent: string;
     }) {
+        await this.abuse.assertSensitiveActionAllowed({
+            identifier: params.email,
+            type: 'PASSWORD_RESET',
+        });
+
         const user = await this.prisma.user.findUnique({
             where: { email: params.email },
         });
@@ -147,108 +136,12 @@ export class CredentialsPasswordsService {
             },
         });
 
-        return { resetToken: rawToken };
-    }
-
-    async confirmPasswordReset(params: {
-        token: string;
-        newPassword: string;
-        confirmPassword: string;
-    }) {
-        if (params.newPassword !== params.confirmPassword) {
-            throw new BadRequestException('Passwords do not match');
-        }
-
-        this.assertStrongPassword(params.newPassword);
-
-        const tokenHash = this.hashToken(params.token);
-
-        const record = await this.prisma.passwordReset.findUnique({
-            where: { tokenHash },
-        });
-
-        if (
-            !record ||
-            record.used ||
-            record.expiresAt < new Date()
-        ) {
-            throw new UnauthorizedException('Invalid reset token');
-        }
-
-        const passwordHash = await bcrypt.hash(params.newPassword, 12);
-
-        await this.prisma.$transaction([
-            this.prisma.authAccount.updateMany({
-                where: {
-                    userId: record.userId,
-                    provider: 'LOCAL',
-                },
-                data: {
-                    passwordHash,
-                },
-            }),
-            this.prisma.passwordReset.update({
-                where: { id: record.id },
-                data: {
-                    used: true,
-                    usedAt: new Date(),
-                },
-            }),
-        ]);
-
-        return { success: true };
-    }
-
-    async changePassword(params: {
-        userId: string;
-        currentPassword: string;
-        newPassword: string;
-        confirmPassword: string;
-    }) {
-        if (params.newPassword !== params.confirmPassword) {
-            throw new BadRequestException('Passwords do not match');
-        }
-
-        this.assertStrongPassword(params.newPassword);
-
-        const account = await this.prisma.authAccount.findFirst({
-            where: {
-                userId: params.userId,
-                provider: 'LOCAL',
-            },
-        });
-
-        if (!account || !account.passwordHash) {
-            throw new UnauthorizedException();
-        }
-
-        const valid = await bcrypt.compare(
-            params.currentPassword,
-            account.passwordHash,
+        await this.mail.sendPasswordReset(
+            user.email,
+            `${process.env.FRONTEND_URL}/reset-password?token=${rawToken}`,
         );
 
-        if (!valid) {
-            throw new UnauthorizedException('Invalid password');
-        }
-
-        const passwordHash = await bcrypt.hash(params.newPassword, 12);
-
-        await this.prisma.authAccount.update({
-            where: { id: account.id },
-            data: { passwordHash },
-        });
-
         return { success: true };
-    }
-
-    private assertStrongPassword(password: string) {
-        if (
-            !/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}/.test(
-                password,
-            )
-        ) {
-            throw new BadRequestException('Weak password');
-        }
     }
 
     private hashToken(token: string): string {

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token/token.service';
+import { MailService } from '../../mail/mail.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -14,7 +15,8 @@ export class AccountIdentityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokenService: TokenService,
-  ) {}
+    private readonly mailService: MailService,
+  ) { }
 
   async register(params: {
     email: string;
@@ -75,6 +77,10 @@ export class AccountIdentityService {
       },
     });
 
+    const link = `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`;
+
+    await this.mailService.sendEmailVerification(email, link);
+
     await this.prisma.userAuditLog.create({
       data: {
         userId: user.id,
@@ -86,7 +92,7 @@ export class AccountIdentityService {
       },
     });
 
-    return { verificationToken: rawToken };
+    return { success: true };
   }
 
   async verifyEmail(token: string) {
@@ -153,7 +159,11 @@ export class AccountIdentityService {
       },
     });
 
-    return { verificationToken: rawToken };
+    const link = `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`;
+
+    await this.mailService.sendEmailVerification(email, link);
+
+    return { success: true };
   }
 
   private hashToken(token: string): string {
