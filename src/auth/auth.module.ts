@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { TokenModule } from './token/token.module';
+import { MailModule } from '../mail/mail.module';
 
 import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
@@ -12,7 +13,10 @@ import { SecurityAbuseService } from './services/security-abuse.service';
 import { AuditObservabilityService } from './services/audit-observability.service';
 
 @Module({
-  imports: [TokenModule],
+  imports: [
+    TokenModule,
+    MailModule,
+  ],
   controllers: [AuthController],
   providers: [
     AuthService,
@@ -26,4 +30,4 @@ import { AuditObservabilityService } from './services/audit-observability.servic
   ],
   exports: [AuthService],
 })
-export class AuthModule {}
+export class AuthModule { }
