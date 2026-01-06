@@ -1,292 +1,84 @@
-import {
-    Injectable,
-    UnauthorizedException,
-    ConflictException,
-    BadRequestException,
-} from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../prisma/prisma.service';
-import { TokenService } from './token/token.service';
+import { Injectable } from '@nestjs/common';
+import { AccountIdentityService } from './services/account-identity.service';
+import { CredentialsPasswordsService } from './services/credentials-passwords.service';
+import { SessionsDevicesService } from './services/sessions-devices.service';
+import { TokensOrchestrationService } from './services/tokens-orchestration.service';
+import { AuthorizationService } from './services/authorization.service';
+import { SecurityAbuseService } from './services/security-abuse.service';
+import { AuditObservabilityService } from './services/audit-observability.service';
 
 @Injectable()
 export class AuthService {
-    constructor(
-        private readonly prisma: PrismaService,
-        private readonly tokenService: TokenService,
-    ) { }
+  constructor(
+    private readonly accountIdentity: AccountIdentityService,
+    private readonly credentials: CredentialsPasswordsService,
+    private readonly sessions: SessionsDevicesService,
+    private readonly tokens: TokensOrchestrationService,
+    private readonly authorization: AuthorizationService,
+    private readonly security: SecurityAbuseService,
+    private readonly audit: AuditObservabilityService,
+  ) {}
 
-    async register(params: {
-        email: string;
-        password: string;
-        confirmPassword: string;
-        phoneNumber: string;
-        ipAddress: string;
-        userAgent: string;
-    }) {
-        const {
-            email,
-            password,
-            confirmPassword,
-            phoneNumber,
-            ipAddress,
-            userAgent,
-        } = params;
+  register(dto) {
+    return this.accountIdentity.register(dto);
+  }
 
-        if (password !== confirmPassword) {
-            throw new BadRequestException('Passwords do not match');
-        }
+  verifyEmail(token: string) {
+    return this.accountIdentity.verifyEmail(token);
+  }
 
-        if (
-            !/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}/.test(
-                password,
-            )
-        ) {
-            throw new BadRequestException('Weak password');
-        }
+  resendVerification(email: string) {
+    return this.accountIdentity.resendVerification(email);
+  }
 
-        const existingUser = await this.prisma.user.findUnique({
-            where: { email },
-        });
+  async login(dto) {
+    await this.security.assertLoginAllowed({
+      identifier: dto.email,
+    });
 
-        if (existingUser) {
-            throw new ConflictException('Email already in use');
-        }
-
-        const passwordHash = await bcrypt.hash(password, 12);
-
-        const user = await this.prisma.user.create({
-            data: {
-                email,
-                authAccounts: {
-                    create: {
-                        provider: 'LOCAL',
-                        passwordHash,
-                        isPrimary: true,
-                        isVerified: false,
-                    },
-                },
-                customerProfile: {
-                    create: {
-                        phoneNumber,
-                    },
-                },
-            },
-        });
-
-        const session = await this.prisma.session.create({
-            data: {
-                userId: user.id,
-                ipAddress,
-                userAgent,
-                expiresAt: new Date(
-                    Date.now() + 1000 * 60 * 60 * 24 * 30,
-                ),
-            },
-        });
-
-        const accessToken =
-            this.tokenService.generateAccessToken(
-                user.id,
-                'CUSTOMER',
-                session.id,
-            );
-
-        const { refreshToken } =
-            await this.tokenService.generateRefreshToken({
-                userId: user.id,
-                sessionId: session.id,
-                ipAddress,
-                userAgent,
-            });
-
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: user.id,
-                eventType: 'AUTH',
-                eventAction: 'REGISTER',
-                ipAddress,
-                userAgent,
-                success: true,
-            },
-        });
-
-        return { accessToken, refreshToken };
+    try {
+      const result = await this.credentials.login(dto);
+      await this.security.clearLoginFailures(dto.email);
+      return result;
+    } catch (e) {
+      await this.security.recordFailedLogin({
+        identifier: dto.email,
+        ipAddress: dto.ipAddress,
+        userAgent: dto.userAgent,
+      });
+      throw e;
     }
+  }
 
-    async login(params: {
-        email: string;
-        password: string;
-        ipAddress: string;
-        userAgent: string;
-    }) {
-        const { email, password, ipAddress, userAgent } = params;
+  refresh(dto) {
+    return this.tokens.refreshTokens(dto);
+  }
 
-        const account = await this.prisma.authAccount.findFirst({
-            where: {
-                provider: 'LOCAL',
-                user: { email },
-            },
-            include: { user: true },
-        });
+  logout(dto) {
+    return this.sessions.logoutCurrentSession(dto);
+  }
 
-        if (!account || !account.passwordHash) {
-            throw new UnauthorizedException('Invalid credentials');
-        }
+  logoutAll(dto) {
+    return this.sessions.logoutAllSessions(dto.userId);
+  }
 
-        const passwordValid = await bcrypt.compare(
-            password,
-            account.passwordHash,
-        );
+  requestPasswordReset(dto) {
+    return this.credentials.requestPasswordReset(dto);
+  }
 
-        if (!passwordValid) {
-            await this.prisma.securityEvent.create({
-                data: {
-                    email,
-                    eventType: 'FAILED_LOGIN',
-                    severity: 'MEDIUM',
-                    description: 'Invalid password',
-                    ipAddress,
-                    userAgent,
-                },
-            });
-            throw new UnauthorizedException('Invalid credentials');
-        }
+  confirmPasswordReset(dto) {
+    return this.credentials.confirmPasswordReset(dto);
+  }
 
-        const session = await this.prisma.session.create({
-            data: {
-                userId: account.user.id,
-                ipAddress,
-                userAgent,
-                expiresAt: new Date(
-                    Date.now() + 1000 * 60 * 60 * 24 * 30,
-                ),
-            },
-        });
+  changePassword(dto) {
+    return this.credentials.changePassword(dto);
+  }
 
-        const accessToken =
-            this.tokenService.generateAccessToken(
-                account.user.id,
-                'CUSTOMER',
-                session.id,
-            );
+  listSessions(userId: string) {
+    return this.sessions.listSessions(userId);
+  }
 
-        const { refreshToken } =
-            await this.tokenService.generateRefreshToken({
-                userId: account.user.id,
-                sessionId: session.id,
-                ipAddress,
-                userAgent,
-            });
-
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: account.user.id,
-                eventType: 'AUTH',
-                eventAction: 'LOGIN',
-                ipAddress,
-                userAgent,
-                success: true,
-            },
-        });
-
-        return { accessToken, refreshToken };
-    }
-
-    async refresh(params: {
-        refreshToken: string;
-        ipAddress: string;
-        userAgent: string;
-    }) {
-        const {
-            userId,
-            sessionId,
-            refreshToken: newRefreshToken,
-        } = await this.tokenService.rotateRefreshToken({
-            refreshToken: params.refreshToken,
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-        });
-
-        const session = await this.prisma.session.findFirst({
-            where: {
-                id: sessionId,
-                isActive: true,
-            },
-        });
-
-        if (!session || session.expiresAt < new Date()) {
-            throw new UnauthorizedException('Session invalid');
-        }
-
-        const accessToken =
-            this.tokenService.generateAccessToken(
-                userId,
-                'CUSTOMER',
-                sessionId,
-            );
-
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId,
-                eventType: 'AUTH',
-                eventAction: 'REFRESH',
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-                success: true,
-            },
-        });
-
-        return {
-            accessToken,
-            refreshToken: newRefreshToken,
-        };
-    }
-
-    async logout(params: {
-        userId: string;
-        sessionId: string;
-        ipAddress?: string;
-        userAgent?: string;
-    }) {
-        await this.tokenService.invalidateSession(
-            params.sessionId,
-            'USER_LOGOUT',
-        );
-
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: params.userId,
-                eventType: 'AUTH',
-                eventAction: 'LOGOUT',
-                ipAddress: params.ipAddress ?? 'unknown',
-                userAgent: params.userAgent ?? 'unknown',
-                success: true,
-            },
-        });
-
-        return { success: true };
-    }
-
-    async logoutAll(params: {
-        userId: string;
-    }) {
-        const sessions = await this.prisma.session.findMany({
-            where: {
-                userId: params.userId,
-                isActive: true,
-            },
-            select: { id: true },
-        });
-
-        for (const session of sessions) {
-            await this.tokenService.invalidateSession(
-                session.id,
-                'USER_LOGOUT_ALL',
-            );
-        }
-
-        return { success: true };
-    }
-
-    
+  revokeSession(dto) {
+    return this.sessions.revokeSession(dto);
+  }
 }

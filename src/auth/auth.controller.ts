@@ -2,75 +2,54 @@ import {
   Body,
   Controller,
   Post,
+  Get,
   Req,
   UseGuards,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import {
-  Throttle,
-  ThrottlerGuard,
-} from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-interface AuthenticatedRequest extends Request {
-  user: {
-    userId: string;
-    role: string;
-    sessionId: string;
-  };
-}
-
 @Controller('auth')
-@UseGuards(ThrottlerGuard)
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(private readonly auth: AuthService) {}
 
-  @Throttle({ limit: 3, ttl: 60 })
   @Post('register')
-  async register(
-    @Body() dto: RegisterDto,
-    @Req() req: Request,
-  ) {
-    return this.authService.register({
-      email: dto.email,
-      password: dto.password,
-      confirmPassword: dto.confirmPassword,
-      phoneNumber: dto.phoneNumber,
+  register(@Body() dto, @Req() req: Request) {
+    return this.auth.register({
+      ...dto,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
 
-  @Throttle({ limit: 5, ttl: 60 })
+  @Post('verify-email')
+  verifyEmail(@Body('token') token: string) {
+    return this.auth.verifyEmail(token);
+  }
+
+  @Post('resend-verification')
+  resendVerification(@Body('email') email: string) {
+    return this.auth.resendVerification(email);
+  }
+
   @Post('login')
-  async login(
-    @Body() dto: LoginDto,
-    @Req() req: Request,
-  ) {
-    return this.authService.login({
-      email: dto.email,
-      password: dto.password,
+  login(@Body() dto, @Req() req: Request) {
+    return this.auth.login({
+      ...dto,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
 
-  @Throttle({ limit: 10, ttl: 60 })
   @Post('refresh')
-  async refresh(
-    @Body() dto: RefreshTokenDto,
-    @Req() req: Request,
-  ) {
-    if (!dto.refreshToken || dto.refreshToken.length < 64) {
+  refresh(@Body() dto, @Req() req: Request) {
+    if (!dto.refreshToken) {
       throw new UnauthorizedException();
     }
 
-    return this.authService.refresh({
+    return this.auth.refresh({
       refreshToken: dto.refreshToken,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
@@ -79,20 +58,56 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  async logout(@Req() req: AuthenticatedRequest) {
-    return this.authService.logout({
+  logout(@Req() req) {
+    return this.auth.logout({
       userId: req.user.userId,
       sessionId: req.user.sessionId,
-      ipAddress: req.ip ?? 'unknown',
-      userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('logout-all')
-  async logoutAll(@Req() req: AuthenticatedRequest) {
-    return this.authService.logoutAll({
+  logoutAll(@Req() req) {
+    return this.auth.logoutAll({
       userId: req.user.userId,
+    });
+  }
+
+  @Post('password-reset')
+  requestPasswordReset(@Body() dto, @Req() req: Request) {
+    return this.auth.requestPasswordReset({
+      ...dto,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
+    });
+  }
+
+  @Post('password-reset/confirm')
+  confirmPasswordReset(@Body() dto) {
+    return this.auth.confirmPasswordReset(dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('password-change')
+  changePassword(@Req() req, @Body() dto) {
+    return this.auth.changePassword({
+      userId: req.user.userId,
+      ...dto,
+    });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('sessions')
+  listSessions(@Req() req) {
+    return this.auth.listSessions(req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke')
+  revokeSession(@Req() req, @Body('sessionId') sessionId: string) {
+    return this.auth.revokeSession({
+      userId: req.user.userId,
+      sessionId,
     });
   }
 }

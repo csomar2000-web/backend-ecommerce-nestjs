@@ -1,7 +1,7 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsString, Length } from 'class-validator';
 
 export class RefreshTokenDto {
   @IsString()
-  @MinLength(32)
+  @Length(64, 256)
   refreshToken: string;
 }

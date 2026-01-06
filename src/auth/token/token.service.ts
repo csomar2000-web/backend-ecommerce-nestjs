@@ -20,18 +20,13 @@ export class TokenService {
         role: string,
         sessionId: string,
     ): string {
-        return this.jwt.sign(
-            {
-                sub: userId,
-                role,
-                sessionId,
-            },
-            {
-                issuer: 'auth-service',
-                audience: 'api',
-            },
-        );
+        return this.jwt.sign({
+            sub: userId,
+            role,
+            sessionId,
+        });
     }
+
 
     async generateRefreshToken(params: {
         userId: string;
@@ -73,6 +68,7 @@ export class TokenService {
         return { refreshToken: rawToken };
     }
 
+
     async rotateRefreshToken(params: {
         refreshToken: string;
         ipAddress: string;
@@ -93,8 +89,7 @@ export class TokenService {
         if (!existingToken) {
             throw new ForbiddenException('Invalid refresh token');
         }
-
-        if (existingToken.session.expiresAt < new Date()) {
+        if (existingToken.session.expiresAt <= new Date()) {
             await this.invalidateSession(
                 existingToken.sessionId,
                 'SESSION_EXPIRED',
@@ -119,12 +114,10 @@ export class TokenService {
                 },
             });
 
-            throw new ForbiddenException(
-                'Refresh token reuse detected',
-            );
+            throw new ForbiddenException('Refresh token reuse detected');
         }
 
-        if (existingToken.expiresAt < new Date()) {
+        if (existingToken.expiresAt <= new Date()) {
             await this.prisma.refreshToken.update({
                 where: { id: existingToken.id },
                 data: {
@@ -132,9 +125,9 @@ export class TokenService {
                     revokedAt: new Date(),
                 },
             });
+
             throw new ForbiddenException('Refresh token expired');
         }
-
         await this.prisma.refreshToken.update({
             where: { id: existingToken.id },
             data: {
@@ -142,7 +135,6 @@ export class TokenService {
                 revokedAt: new Date(),
             },
         });
-
         const { refreshToken } =
             await this.generateRefreshToken({
                 userId: existingToken.userId,
@@ -162,17 +154,17 @@ export class TokenService {
     async invalidateSession(
         sessionId: string,
         reason: string,
-    ) {
+    ): Promise<void> {
         const session = await this.prisma.session.findUnique({
             where: { id: sessionId },
         });
 
-        if (!session || session.expiresAt < new Date()) {
+        if (!session || !session.isActive) {
             return;
         }
 
-        await this.prisma.session.updateMany({
-            where: { id: sessionId, isActive: true },
+        await this.prisma.session.update({
+            where: { id: sessionId },
             data: {
                 isActive: false,
                 invalidatedAt: new Date(),
@@ -188,6 +180,19 @@ export class TokenService {
             },
         });
     }
+
+    async cleanupExpiredAuthData(): Promise<void> {
+        const now = new Date();
+
+        await this.prisma.refreshToken.deleteMany({
+            where: { expiresAt: { lt: now } },
+        });
+
+        await this.prisma.session.deleteMany({
+            where: { expiresAt: { lt: now } },
+        });
+    }
+
 
     private hashToken(token: string): string {
         return crypto
