@@ -2,7 +2,6 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-
 import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
 import { SessionsDevicesService } from './services/sessions-devices.service';
@@ -10,10 +9,8 @@ import { TokensOrchestrationService } from './services/tokens-orchestration.serv
 import { AuthorizationService } from './services/authorization.service';
 import { SecurityAbuseService } from './services/security-abuse.service';
 import { AuditObservabilityService } from './services/audit-observability.service';
-
 import { GoogleAuthService } from './services/google-auth.service';
 import { FacebookAuthService } from './services/facebook-auth.service';
-
 import { AuthProvider } from '@prisma/client';
 import { SocialProfile } from './types/social-profile.type';
 
@@ -30,10 +27,6 @@ export class AuthService {
     private readonly googleAuth: GoogleAuthService,
     private readonly facebookAuth: FacebookAuthService,
   ) { }
-
-  /* --------------------------------------------------------------------------
-   * Registration & email verification
-   * -------------------------------------------------------------------------- */
 
   register(dto: any) {
     return this.accountIdentity.register(dto);
@@ -52,10 +45,6 @@ export class AuthService {
     return this.accountIdentity.resendVerification(email);
   }
 
-  /* --------------------------------------------------------------------------
-   * Local authentication
-   * -------------------------------------------------------------------------- */
-
   async login(dto: any) {
     await this.security.assertLoginAllowed({
       identifier: dto.email,
@@ -64,7 +53,18 @@ export class AuthService {
     try {
       const result = await this.credentials.login(dto);
       await this.security.clearLoginFailures(dto.email);
-      return result;
+
+      if ('mfaRequired' in result) {
+        return result;
+      }
+
+      return this.tokens.issueTokens({
+        userId: result.userId,
+        sessionId: result.sessionId,
+        role: 'CUSTOMER',
+        ipAddress: dto.ipAddress,
+        userAgent: dto.userAgent,
+      });
     } catch (error) {
       await this.security.recordFailedLogin({
         identifier: dto.email,
@@ -87,10 +87,6 @@ export class AuthService {
     return this.sessions.logoutAllSessions(dto);
   }
 
-  /* --------------------------------------------------------------------------
-   * Password management
-   * -------------------------------------------------------------------------- */
-
   requestPasswordReset(dto: any) {
     return this.credentials.requestPasswordReset(dto);
   }
@@ -102,10 +98,6 @@ export class AuthService {
   changePassword(dto: any) {
     return this.credentials.changePassword(dto);
   }
-
-  /* --------------------------------------------------------------------------
-   * Sessions
-   * -------------------------------------------------------------------------- */
 
   listSessions(userId: string) {
     return this.sessions.listSessions(userId);
@@ -119,10 +111,6 @@ export class AuthService {
     return this.sessions.revokeSession(dto);
   }
 
-  /* --------------------------------------------------------------------------
-   * Social authentication
-   * -------------------------------------------------------------------------- */
-
   async loginWithGoogle(dto: {
     idToken: string;
     ipAddress: string;
@@ -133,7 +121,6 @@ export class AuthService {
     });
 
     const profile = await this.googleAuth.verifyIdToken(dto.idToken);
-
     return this.handleSocialLogin(AuthProvider.GOOGLE, profile, dto);
   }
 
@@ -151,10 +138,6 @@ export class AuthService {
 
     return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, dto);
   }
-
-  /* --------------------------------------------------------------------------
-   * Core social login orchestration
-   * -------------------------------------------------------------------------- */
 
   private async handleSocialLogin(
     provider: AuthProvider,
@@ -191,9 +174,7 @@ export class AuthService {
       userAgent: context.userAgent,
       resource: 'AUTH_ACCOUNT',
       resourceId: authAccount.id,
-      metadata: {
-        provider,
-      },
+      metadata: { provider },
     });
 
     return this.tokens.issueTokens({

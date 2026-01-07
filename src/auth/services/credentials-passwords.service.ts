@@ -7,12 +7,12 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionsDevicesService } from './sessions-devices.service';
 import { MailService } from '../../mail/mail.service';
-import { AuthProvider, MfaType, Prisma } from '@prisma/client';
+import { AuthProvider } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
 const RESET_TOKEN_TTL_HOURS = 1;
-const PASSWORD_MIN_LENGTH = 10;
+const PASSWORD_MIN_LENGTH = 6;
 
 @Injectable()
 export class CredentialsPasswordsService {
@@ -21,10 +21,6 @@ export class CredentialsPasswordsService {
         private readonly sessions: SessionsDevicesService,
         private readonly mail: MailService,
     ) { }
-
-    /* ------------------------------------------------------------------ */
-    /* LOGIN                                                              */
-    /* ------------------------------------------------------------------ */
 
     async login(params: {
         email: string;
@@ -46,7 +42,7 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        if (account.verifiedAt === null) {
+        if (!account.verifiedAt) {
             throw new ForbiddenException('Email not verified');
         }
 
@@ -59,14 +55,12 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        // Create session
         const session = await this.sessions.createSession({
             userId: account.user.id,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
         });
 
-        // Check if MFA exists (simple enforcement)
         const mfaEnabled = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: account.user.id,
@@ -82,22 +76,11 @@ export class CredentialsPasswordsService {
             };
         }
 
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: account.user.id,
-                action: 'LOGIN_SUCCESS',
-                success: true,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            },
-        });
-
-        return { sessionId: session.id };
+        return {
+            userId: account.user.id,
+            sessionId: session.id,
+        };
     }
-
-    /* ------------------------------------------------------------------ */
-    /* PASSWORD RESET                                                     */
-    /* ------------------------------------------------------------------ */
 
     async requestPasswordReset(params: {
         email: string;
@@ -169,27 +152,13 @@ export class CredentialsPasswordsService {
                 data: { usedAt: new Date() },
             }),
             this.prisma.session.updateMany({
-                where: { userId: reset.userId, revokedAt: null },
+                where: { userId: reset.userId },
                 data: { revokedAt: new Date() },
             }),
         ]);
 
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: reset.userId,
-                action: 'PASSWORD_RESET',
-                success: true,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            },
-        });
-
         return { success: true };
     }
-
-    /* ------------------------------------------------------------------ */
-    /* PASSWORD CHANGE                                                    */
-    /* ------------------------------------------------------------------ */
 
     async changePassword(params: {
         userId: string;
@@ -230,20 +199,10 @@ export class CredentialsPasswordsService {
                 data: { passwordHash: newHash },
             }),
             this.prisma.session.updateMany({
-                where: { userId: params.userId, revokedAt: null },
+                where: { userId: params.userId },
                 data: { revokedAt: new Date() },
             }),
         ]);
-
-        await this.prisma.userAuditLog.create({
-            data: {
-                userId: params.userId,
-                action: 'PASSWORD_CHANGED',
-                success: true,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            },
-        });
 
         return { success: true };
     }
