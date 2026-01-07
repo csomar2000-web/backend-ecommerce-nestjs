@@ -11,6 +11,7 @@ import type { Request } from 'express';
 
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { AccountIdentityService } from './services/account-identity.service';
 
 // Auth
 import { RegisterDto } from './dto/auth/register.dto';
@@ -21,7 +22,7 @@ import { RefreshTokenDto } from './dto/auth/refresh-token.dto';
 import { VerifyEmailDto } from './dto/email/verify-email.dto';
 import { ResendVerificationDto } from './dto/email/resend-verification.dto';
 
-// Password (✅ fixed)
+// Password
 import {
   ForgotPasswordDto,
   ResetPasswordDto,
@@ -35,9 +36,12 @@ import { RevokeSessionDto } from './dto/session/revoke-session.dto';
 import { GoogleAuthDto } from './dto/oauth/google-auth.dto';
 import { FacebookAuthDto } from './dto/oauth/facebook-auth.dto';
 
-@Controller('auth')
+@Controller('api/auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) { }
+  constructor(
+    private readonly auth: AuthService,
+    private readonly accountIdentity: AccountIdentityService,
+  ) { }
 
   @Post('register')
   register(@Body() dto: RegisterDto, @Req() req: Request) {
@@ -79,27 +83,21 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   logout(@Req() req: any) {
-    const accessToken = this.extractAccessToken(req);
-
     return this.auth.logout({
       userId: req.user.userId,
       sessionId: req.user.sessionId,
-      accessToken,
+      accessToken: this.extractAccessToken(req),
     });
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('logout-all')
   logoutAll(@Req() req: any) {
-    const accessToken = this.extractAccessToken(req);
-
     return this.auth.logoutAll({
       userId: req.user.userId,
-      accessToken,
+      accessToken: this.extractAccessToken(req),
     });
   }
-
-  // 🔐 Password reset (✅ fixed DTO names)
 
   @Post('password-reset')
   requestPasswordReset(
@@ -127,8 +125,6 @@ export class AuthController {
     });
   }
 
-  // 🔑 Sessions
-
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
   listSessions(@Req() req: any) {
@@ -138,16 +134,12 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('sessions/revoke')
   revokeSession(@Req() req: any, @Body() dto: RevokeSessionDto) {
-    const accessToken = this.extractAccessToken(req);
-
     return this.auth.revokeSession({
       userId: req.user.userId,
       sessionId: dto.sessionId,
-      accessToken,
+      accessToken: this.extractAccessToken(req),
     });
   }
-
-  // 🌐 OAuth
 
   @Post('google')
   googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
@@ -165,6 +157,32 @@ export class AuthController {
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
+  }
+
+  /* ===================== MFA ===================== */
+
+  @UseGuards(JwtAuthGuard)
+  @Post('mfa/setup')
+  setupMfa(@Req() req: any) {
+    return this.accountIdentity.setupMfaTotp(req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('mfa/confirm')
+  confirmMfa(@Req() req: any, @Body() body: { code: string }) {
+    return this.accountIdentity.confirmMfaTotp({
+      userId: req.user.userId,
+      code: body.code,
+    });
+  }
+
+  @Post('mfa/complete')
+  completeMfa(@Body() body: {
+    sessionId: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
+    return this.auth.completeMfa(body);
   }
 
   private extractAccessToken(req: Request): string {
