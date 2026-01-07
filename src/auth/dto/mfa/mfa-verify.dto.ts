@@ -1,6 +1,6 @@
 import { IsString, Length } from 'class-validator';
 
-export class VerifyMfaDto {
+export class MfaVerifyDto {
   @IsString()
   @Length(6, 8)
   code: string;

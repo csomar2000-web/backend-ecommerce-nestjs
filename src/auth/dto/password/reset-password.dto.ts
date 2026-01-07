@@ -1,6 +1,6 @@
 import { IsString, MinLength } from 'class-validator';
 
-export class PasswordResetConfirmDto {
+export class ResetPasswordDto {
   @IsString()
   token: string;
 

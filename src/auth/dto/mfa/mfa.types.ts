@@ -1,5 +1,6 @@
 export enum MfaMethod {
-  TOTP = 'totp',
-  SMS = 'sms',
-  EMAIL = 'email',
+    TOTP = 'TOTP',
+    SMS = 'SMS',
+    EMAIL = 'EMAIL',
+    WEBAUTHN = 'WEBAUTHN',
 }

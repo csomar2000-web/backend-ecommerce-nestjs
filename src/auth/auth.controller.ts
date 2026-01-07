@@ -11,17 +11,17 @@ import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
-import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { RegisterDto } from './dto/auth/register.dto';
+import { LoginDto } from './dto/auth/login.dto';
+import { RefreshTokenDto } from './dto/auth/refresh-token.dto';
+import { VerifyEmailDto } from './dto/email/verify-email.dto';
+import { ResendVerificationDto } from './dto/email/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset.dto';
 import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { PasswordChangeDto } from './dto/password-change.dto';
-import { RevokeSessionDto } from './dto/revoke-session.dto';
-import { GoogleAuthDto } from './dto/google-auth.dto';
-import { FacebookAuthDto } from './dto/facebook-auth.dto';
+import { RevokeSessionDto } from './dto/session/revoke-session.dto';
+import { GoogleAuthDto } from './dto/oauth/google-auth.dto';
+import { FacebookAuthDto } from './dto/oauth/facebook-auth.dto';
 
 @Controller('auth')
 export class AuthController {
