@@ -7,523 +7,232 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id                  String                   @id @default(cuid())
-  email               String                   @unique
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
-  adminProfile        AdminProfile?
-  authAccounts        AuthAccount[]
-  businessOwner       BusinessOwner?
-  customerProfile     CustomerProfile?
-  emailVerifications  EmailVerification[]
-  passwordResets      PasswordReset[]
-  refreshTokens       RefreshToken[]
-  sessions            Session[]
-  auditLogs           UserAuditLog[]
-  permissionOverrides UserPermissionOverride[]
-  roleAssignments     UserRoleAssignment[]
-  workerProfile       WorkerProfile?
-  mfaChallenges       MfaChallenge[]
-  mfaFactors          MfaFactor[]
-  mfaRecoveryCodes    MfaRecoveryCode[]
+////////////////////////
+// USER (IDENTITY)
+////////////////////////
 
+model User {
+  id          String     @id @default(cuid())
+  email       String     @unique
+  username    String?    @unique
+  firstName   String?
+  lastName    String?
+  displayName String?
+  status      UserStatus @default(ACTIVE)
+  lastLoginAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  authAccounts    AuthAccount[]
+  sessions        Session[]
+  roleAssignments UserRoleAssignment[]
+
+  // Profile types (one-to-one relationships)
+  customerProfile      CustomerProfile?
+  workerProfile        WorkerProfile?
+  businessOwnerProfile BusinessOwnerProfile?
+
+  // Security & Audit
+  mfaFactors         MfaFactor[]
+  auditLogs          UserAuditLog[]
+  passwordResets     PasswordReset[]
+  emailVerifications EmailVerification[]
+
+  @@index([email])
+  @@index([status])
+  @@index([deletedAt])
   @@map("users")
 }
 
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+////////////////////////
+// AUTHENTICATION
+////////////////////////
+
 model AuthAccount {
-  id            String       @id @default(cuid())
-  userId        String
-  provider      AuthProvider
-  providerId    String
-  emailVerified Boolean      @default(true)
-  passwordHash  String?
-  isPrimary     Boolean      @default(false)
-  isVerified    Boolean      @default(false)
-  metadata      Json?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  lastUsedAt    DateTime?
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String       @id @default(cuid())
+  userId       String
+  provider     AuthProvider
+  providerId   String
+  passwordHash String?
+  isPrimary    Boolean      @default(false)
+  verifiedAt   DateTime?
+  lastUsedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerId])
   @@unique([userId, provider])
   @@index([userId])
-  @@index([provider, providerId])
   @@map("auth_accounts")
-}
-
-model OAuthState {
-  id        String       @id @default(cuid())
-  state     String       @unique
-  provider  AuthProvider
-  expiresAt DateTime
-  used      Boolean      @default(false)
-  createdAt DateTime     @default(now())
-
-  @@index([state])
-  @@index([expiresAt])
-  @@map("oauth_states")
-}
-
-model MfaFactor {
-  id         String    @id @default(cuid())
-  userId     String
-  type       MfaType
-  secretHash String
-  isEnabled  Boolean   @default(false)
-  verifiedAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  revokedAt  DateTime?
-  lastUsedAt DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, type])
-  @@index([userId])
-  @@index([userId, isEnabled])
-  @@map("mfa_factors")
-}
-
-model MfaChallenge {
-  id         String             @id @default(cuid())
-  userId     String
-  sessionId  String
-  factorType MfaType
-  satisfied  Boolean            @default(false)
-  expiresAt  DateTime
-  reason     MfaChallengeReason
-  createdAt  DateTime           @default(now())
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@unique([sessionId, factorType])
-  @@index([userId, sessionId])
-  @@index([expiresAt])
-  @@index([reason])
-  @@map("mfa_challenges")
-}
-
-model Session {
-  id                 String         @id @default(cuid())
-  userId             String
-  sessionToken       String         @unique @default(cuid())
-  ipAddress          String
-  userAgent          String
-  deviceId           String?
-  deviceName         String?
-  country            String?
-  city               String?
-  isActive           Boolean        @default(true)
-  expiresAt          DateTime
-  lastActivityAt     DateTime       @default(now())
-  invalidatedAt      DateTime?
-  invalidationReason String?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  refreshTokens      RefreshToken[]
-  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mfaChallenges      MfaChallenge[]
-
-  @@index([userId, isActive])
-  @@index([sessionToken])
-  @@index([expiresAt])
-  @@index([lastActivityAt])
-  @@map("sessions")
-}
-
-model RefreshToken {
-  id             String    @id @default(cuid())
-  userId         String
-  sessionId      String
-  tokenHash      String    @unique
-  tokenFamily    String
-  expiresAt      DateTime
-  isRevoked      Boolean   @default(false)
-  revokedAt      DateTime?
-  replacedByHash String?
-  ipAddress      String
-  userAgent      String
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, isRevoked])
-  @@index([tokenHash])
-  @@index([tokenFamily])
-  @@index([sessionId])
-  @@index([expiresAt])
-  @@map("refresh_tokens")
-}
-
-model EmailVerification {
-  id         String    @id @default(cuid())
-  userId     String
-  email      String
-  tokenHash  String    @unique
-  expiresAt  DateTime
-  verified   Boolean   @default(false)
-  verifiedAt DateTime?
-  attempts   Int       @default(0)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([tokenHash])
-  @@index([expiresAt])
-  @@map("email_verifications")
-}
-
-model PasswordReset {
-  id        String    @id @default(cuid())
-  userId    String
-  tokenHash String    @unique
-  expiresAt DateTime
-  used      Boolean   @default(false)
-  usedAt    DateTime?
-  ipAddress String
-  userAgent String
-  attempts  Int       @default(0)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([tokenHash])
-  @@index([expiresAt])
-  @@map("password_resets")
-}
-
-model Role {
-  id              String               @id @default(cuid())
-  name            String               @unique
-  displayName     String
-  description     String?
-  parentRoleId    String?
-  isSystem        Boolean              @default(false)
-  isActive        Boolean              @default(true)
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  permissions     RolePermission[]
-  parentRole      Role?                @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
-  childRoles      Role[]               @relation("RoleHierarchy")
-  userAssignments UserRoleAssignment[]
-
-  @@index([name])
-  @@index([isActive])
-  @@index([parentRoleId])
-  @@map("roles")
-}
-
-model Permission {
-  id              String                   @id @default(cuid())
-  resource        String
-  action          String
-  scope           String?
-  displayName     String
-  description     String?
-  isSystem        Boolean                  @default(false)
-  createdAt       DateTime                 @default(now())
-  updatedAt       DateTime                 @updatedAt
-  rolePermissions RolePermission[]
-  userOverrides   UserPermissionOverride[]
-
-  @@unique([resource, action, scope])
-  @@index([resource])
-  @@index([action])
-  @@map("permissions")
-}
-
-model RolePermission {
-  id           String     @id @default(cuid())
-  roleId       String
-  permissionId String
-  constraints  Json?
-  createdAt    DateTime   @default(now())
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@unique([roleId, permissionId])
-  @@index([roleId])
-  @@index([permissionId])
-  @@map("role_permissions")
-}
-
-model UserRoleAssignment {
-  id         String    @id @default(cuid())
-  userId     String
-  roleId     String
-  companyId  String?
-  assignedAt DateTime  @default(now())
-  assignedBy String?
-  expiresAt  DateTime?
-  isActive   Boolean   @default(true)
-  company    Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  role       Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, roleId, companyId])
-  @@index([userId])
-  @@index([roleId])
-  @@index([companyId])
-  @@index([expiresAt])
-  @@map("user_role_assignments")
-}
-
-model UserPermissionOverride {
-  id           String     @id @default(cuid())
-  userId       String
-  permissionId String
-  isGranted    Boolean
-  companyId    String?
-  reason       String?
-  grantedAt    DateTime   @default(now())
-  grantedBy    String?
-  expiresAt    DateTime?
-  company      Company?   @relation(fields: [companyId], references: [id])
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, permissionId, companyId])
-  @@index([userId])
-  @@index([permissionId])
-  @@index([expiresAt])
-  @@map("user_permission_overrides")
-}
-
-model CustomerProfile {
-  id                String    @id @default(cuid())
-  userId            String    @unique
-  phoneNumber       String?
-  birthDate         DateTime?
-  preferredLanguage String?   @default("en")
-  marketingConsent  Boolean   @default(false)
-  loyaltyPoints     Int       @default(0)
-  membershipTier    String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([membershipTier])
-  @@map("customer_profiles")
-}
-
-model BusinessOwner {
-  id                    String    @id @default(cuid())
-  userId                String    @unique
-  businessName          String?
-  businessType          String?
-  taxId                 String?   @unique
-  isVerified            Boolean   @default(false)
-  verifiedAt            DateTime?
-  verificationDocuments Json?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companies             Company[]
-
-  @@index([isVerified])
-  @@map("business_owners")
-}
-
-model WorkerProfile {
-  id           String    @id @default(cuid())
-  userId       String    @unique
-  companyId    String
-  employeeId   String?
-  position     String?
-  department   String?
-  hiredAt      DateTime
-  terminatedAt DateTime?
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([companyId, employeeId])
-  @@index([companyId])
-  @@index([isActive])
-  @@map("worker_profiles")
-}
-
-model AdminProfile {
-  id             String   @id @default(cuid())
-  userId         String   @unique
-  adminLevel     String   @default("standard")
-  canManageRoles Boolean  @default(false)
-  canManageUsers Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([adminLevel])
-  @@map("admin_profiles")
-}
-
-model Company {
-  id                  String                   @id @default(cuid())
-  ownerId             String
-  name                String
-  slug                String                   @unique
-  description         String?
-  logo                String?
-  taxId               String?                  @unique
-  registrationNumber  String?
-  status              CompanyStatus            @default(PENDING)
-  isActive            Boolean                  @default(true)
-  isVerified          Boolean                  @default(false)
-  verifiedAt          DateTime?
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
-  owner               BusinessOwner            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  permissionOverrides UserPermissionOverride[]
-  roleAssignments     UserRoleAssignment[]
-  workers             WorkerProfile[]
-
-  @@index([ownerId])
-  @@index([slug])
-  @@index([status])
-  @@map("companies")
-}
-
-model GuestCheckout {
-  id                String   @id @default(cuid())
-  sessionToken      String   @unique
-  email             String
-  ipAddress         String
-  userAgent         String
-  deviceId          String?
-  checkoutData      Json
-  convertedToUserId String?
-  expiresAt         DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([sessionToken])
-  @@index([email])
-  @@index([convertedToUserId])
-  @@index([expiresAt])
-  @@map("guest_checkouts")
-}
-
-model UserAuditLog {
-  id            String         @id @default(cuid())
-  userId        String
-  eventType     AuditEventType
-  eventAction   String
-  resourceType  String?
-  resourceId    String?
-  ipAddress     String
-  userAgent     String
-  sessionId     String?
-  metadata      Json?
-  success       Boolean
-  failureReason String?
-  createdAt     DateTime       @default(now())
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, eventType])
-  @@index([eventType])
-  @@index([createdAt])
-  @@index([sessionId])
-  @@map("user_audit_logs")
-}
-
-model SecurityEvent {
-  id          String            @id @default(cuid())
-  userId      String?
-  email       String?
-  eventType   SecurityEventType
-  severity    SecuritySeverity
-  description String
-  ipAddress   String
-  userAgent   String
-  blocked     Boolean           @default(false)
-  actionTaken String?
-  metadata    Json?
-  createdAt   DateTime          @default(now())
-
-  @@index([userId])
-  @@index([email])
-  @@index([eventType])
-  @@index([severity])
-  @@index([createdAt])
-  @@index([ipAddress])
-  @@map("security_events")
-}
-
-model RateLimit {
-  id           String    @id @default(cuid())
-  identifier   String
-  limitType    String
-  attempts     Int       @default(1)
-  windowStart  DateTime
-  windowEnd    DateTime
-  ipAddress    String?
-  isBlocked    Boolean   @default(false)
-  blockedUntil DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  @@unique([identifier, limitType, windowStart])
-  @@index([identifier, limitType])
-  @@index([windowEnd])
-  @@index([isBlocked])
-  @@map("rate_limits")
-}
-
-model AccountLink {
-  id              String   @id @default(cuid())
-  primaryUserId   String
-  secondaryUserId String
-  linkType        String
-  linkedAt        DateTime @default(now())
-  linkedBy        String?
-  metadata        Json?
-
-  @@unique([primaryUserId, secondaryUserId])
-  @@index([primaryUserId])
-  @@index([secondaryUserId])
-  @@map("account_links")
-}
-
-model TokenBlacklist {
-  id          String   @id @default(cuid())
-  tokenHash   String   @unique
-  tokenType   String
-  userId      String?
-  expiresAt   DateTime
-  blacklisted DateTime @default(now())
-  reason      String?
-
-  @@index([tokenHash])
-  @@index([expiresAt])
-  @@map("token_blacklist")
-}
-
-model MfaRecoveryCode {
-  id        String    @id @default(cuid())
-  userId    String
-  codeHash  String
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, codeHash])
-  @@index([userId])
-  @@map("mfa_recovery_codes")
 }
 
 enum AuthProvider {
   LOCAL
   GOOGLE
   FACEBOOK
+  APPLE
+}
+
+////////////////////////
+// SESSIONS
+////////////////////////
+
+model Session {
+  id           String    @id @default(cuid())
+  userId       String
+  sessionToken String    @unique
+  ipAddress    String?
+  userAgent    String?
+  deviceInfo   String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@index([sessionToken])
+  @@map("sessions")
+}
+
+////////////////////////
+// PASSWORD MANAGEMENT
+////////////////////////
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("password_resets")
+}
+
+model EmailVerification {
+  id         String    @id @default(cuid())
+  userId     String
+  email      String
+  token      String    @unique
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("email_verifications")
+}
+
+////////////////////////
+// PROFILES
+////////////////////////
+
+model CustomerProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  phone           String?
+  phoneVerifiedAt DateTime?
+  birthDate       DateTime?
+  address         Json?
+  preferences     Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone])
+  @@map("customer_profiles")
+}
+
+model BusinessOwnerProfile {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  businessName String
+  taxId        String?   @unique
+  address      Json?
+  verifiedAt   DateTime?
+  verifiedBy   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companies Company[]
+
+  @@index([taxId])
+  @@map("business_owner_profiles")
+}
+
+model WorkerProfile {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  companyId    String
+  position     String?
+  department   String?
+  employeeId   String?
+  hiredAt      DateTime  @default(now())
+  terminatedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, terminatedAt])
+  @@index([employeeId])
+  @@map("worker_profiles")
+}
+
+////////////////////////
+// COMPANY
+////////////////////////
+
+model Company {
+  id          String        @id @default(cuid())
+  ownerId     String
+  name        String
+  slug        String        @unique
+  description String?
+  logo        String?
+  website     String?
+  industry    String?
+  status      CompanyStatus @default(PENDING)
+  verifiedAt  DateTime?
+  suspendedAt DateTime?
+  closedAt    DateTime?
+  deletedAt   DateTime?
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner           BusinessOwnerProfile @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  workers         WorkerProfile[]
+  roleAssignments UserRoleAssignment[]
+
+  @@index([ownerId])
+  @@index([status, deletedAt])
+  @@index([slug])
+  @@map("companies")
 }
 
 enum CompanyStatus {
@@ -533,39 +242,196 @@ enum CompanyStatus {
   CLOSED
 }
 
-enum AuditEventType {
-  AUTH
-  AUTHORIZATION
-  PROFILE
-  SECURITY
-  ADMIN
+////////////////////////
+// ROLES & PERMISSIONS (RBAC)
+////////////////////////
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(true)
+  isActive    Boolean  @default(true)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  users       UserRoleAssignment[]
+
+  @@index([isSystem, isActive])
+  @@map("roles")
 }
 
-enum SecurityEventType {
-  FAILED_LOGIN
-  ACCOUNT_LOCKOUT
-  SUSPICIOUS_ACTIVITY
-  TOKEN_THEFT
-  UNAUTHORIZED_ACCESS
-  BRUTE_FORCE
-  TOKEN_REUSE_DETECTED
-  SESSION_HIJACK_ATTEMPT
+model Permission {
+  id          String   @id @default(cuid())
+  resource    String
+  action      String
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
 }
 
-enum SecuritySeverity {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
+model RolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRoleAssignment {
+  id         String    @id @default(cuid())
+  userId     String
+  roleId     String
+  companyId  String?
+  assignedBy String?
+  assignedAt DateTime  @default(now())
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role    Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, companyId])
+  @@index([userId, revokedAt])
+  @@index([roleId])
+  @@index([companyId])
+  @@index([expiresAt])
+  @@map("user_role_assignments")
+}
+
+////////////////////////
+// GUEST CHECKOUT
+////////////////////////
+
+model GuestCheckout {
+  id              String    @id @default(cuid())
+  email           String
+  sessionToken    String    @unique
+  checkoutData    Json
+  expiresAt       DateTime
+  convertedUserId String?   @unique
+  convertedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([email])
+  @@index([expiresAt])
+  @@index([convertedUserId])
+  @@map("guest_checkouts")
+}
+
+////////////////////////
+// MFA (Multi-Factor Authentication)
+////////////////////////
+
+model MfaFactor {
+  id          String    @id @default(cuid())
+  userId      String
+  type        MfaType
+  name        String?
+  secretHash  String
+  backupCodes Json?
+  verifiedAt  DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId, revokedAt])
+  @@map("mfa_factors")
 }
 
 enum MfaType {
   TOTP
+  SMS
+  EMAIL
   WEBAUTHN
 }
 
-enum MfaChallengeReason {
-  LOGIN
-  REFRESH
-  SENSITIVE_ACTION
+////////////////////////
+// AUDIT LOGS
+////////////////////////
+
+model UserAuditLog {
+  id           String   @id @default(cuid())
+  userId       String
+  action       String
+  resource     String?
+  resourceId   String?
+  success      Boolean
+  errorMessage String?
+  ipAddress    String?
+  userAgent    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("user_audit_logs")
+}
+
+////////////////////////
+// NOTIFICATIONS
+////////////////////////
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  readAt    DateTime?
+  deletedAt DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  SYSTEM
+  SECURITY
+  ACCOUNT
+  COMPANY
+  ALERT
+}
+
+////////////////////////
+// RATE LIMITING
+////////////////////////
+
+model RateLimit {
+  id          String   @id @default(cuid())
+  identifier  String
+  action      String
+  count       Int      @default(1)
+  windowStart DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([identifier, action, windowStart])
+  @@index([expiresAt])
+  @@map("rate_limits")
 }
