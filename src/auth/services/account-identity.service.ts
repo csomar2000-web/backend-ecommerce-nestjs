@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
-import { MfaType, AuthProvider } from '@prisma/client';
+import { AuthProvider, MfaType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
@@ -26,18 +26,11 @@ export class AccountIdentityService {
     email: string;
     password: string;
     confirmPassword: string;
-    phoneNumber: string;
+    phone?: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    const {
-      email,
-      password,
-      confirmPassword,
-      phoneNumber,
-      ipAddress,
-      userAgent,
-    } = params;
+    const { email, password, confirmPassword, phone } = params;
 
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -65,45 +58,35 @@ export class AccountIdentityService {
         authAccounts: {
           create: {
             provider: AuthProvider.LOCAL,
-            providerId: normalizedEmail, // ✅ REQUIRED BY PRISMA
+            providerId: normalizedEmail,
             passwordHash,
             isPrimary: true,
-            isVerified: false,
+            verifiedAt: null,
           },
         },
-        customerProfile: {
-          create: { phoneNumber },
-        },
+        customerProfile: phone
+          ? {
+            create: { phone },
+          }
+          : undefined,
       },
     });
 
-    const rawToken = crypto.randomBytes(48).toString('hex');
-    const tokenHash = this.hashToken(rawToken);
+    const token = crypto.randomBytes(48).toString('hex');
 
     await this.prisma.emailVerification.create({
       data: {
         userId: user.id,
         email: normalizedEmail,
-        tokenHash,
+        token,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
     await this.mailService.sendEmailVerification(
       normalizedEmail,
-      `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`,
+      `${process.env.FRONTEND_URL}/verify-email?token=${token}`,
     );
-
-    await this.prisma.userAuditLog.create({
-      data: {
-        userId: user.id,
-        eventType: 'AUTH',
-        eventAction: 'REGISTER',
-        ipAddress,
-        userAgent,
-        success: true,
-      },
-    });
 
     return { success: true };
   }
@@ -113,27 +96,29 @@ export class AccountIdentityService {
    * ------------------------------------------------------------------ */
 
   async verifyEmail(token: string) {
-    const tokenHash = this.hashToken(token);
-
     const record = await this.prisma.emailVerification.findUnique({
-      where: { tokenHash },
+      where: { token },
     });
 
-    if (!record || record.expiresAt < new Date() || record.verified) {
+    if (
+      !record ||
+      record.expiresAt < new Date() ||
+      record.verifiedAt !== null
+    ) {
       throw new UnauthorizedException('Invalid verification token');
     }
 
     await this.prisma.$transaction([
       this.prisma.emailVerification.update({
         where: { id: record.id },
-        data: { verified: true, verifiedAt: new Date() },
+        data: { verifiedAt: new Date() },
       }),
       this.prisma.authAccount.updateMany({
         where: {
           userId: record.userId,
           provider: AuthProvider.LOCAL,
         },
-        data: { isVerified: true },
+        data: { verifiedAt: new Date() },
       }),
     ]);
 
@@ -156,29 +141,31 @@ export class AccountIdentityService {
       (a) => a.provider === AuthProvider.LOCAL,
     );
 
-    if (!localAccount || localAccount.isVerified) {
+    if (!localAccount || localAccount.verifiedAt !== null) {
       throw new BadRequestException('Account already verified');
     }
 
-    const rawToken = crypto.randomBytes(48).toString('hex');
-    const tokenHash = this.hashToken(rawToken);
+    const token = crypto.randomBytes(48).toString('hex');
 
     await this.prisma.emailVerification.updateMany({
-      where: { userId: user.id, verified: false },
+      where: {
+        userId: user.id,
+        verifiedAt: null,
+      },
       data: {
-        tokenHash,
+        token,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        attempts: { increment: 1 },
       },
     });
 
     await this.mailService.sendEmailVerification(
       normalizedEmail,
-      `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`,
+      `${process.env.FRONTEND_URL}/verify-email?token=${token}`,
     );
 
     return { success: true };
   }
+
   /* ------------------------------------------------------------------
    * SOCIAL AUTH (UPSERT)
    * ------------------------------------------------------------------ */
@@ -188,13 +175,10 @@ export class AccountIdentityService {
     providerId: string;
     email: string;
     emailVerified: boolean;
-    name?: string;
-    avatarUrl?: string;
   }) {
     const normalizedEmail = params.email.toLowerCase().trim();
 
     return this.prisma.$transaction(async (tx) => {
-      // 1. Find or create user
       let user = await tx.user.findUnique({
         where: { email: normalizedEmail },
       });
@@ -203,20 +187,10 @@ export class AccountIdentityService {
         user = await tx.user.create({
           data: {
             email: normalizedEmail,
-            name: params.name,
-            authAccounts: {
-              create: {
-                provider: params.provider,
-                providerId: params.providerId,
-                isPrimary: true,
-                isVerified: true,
-              },
-            },
           },
         });
       }
 
-      // 2. Upsert social auth account
       const authAccount = await tx.authAccount.upsert({
         where: {
           provider_providerId: {
@@ -225,16 +199,15 @@ export class AccountIdentityService {
           },
         },
         update: {
-          email: normalizedEmail,
-          isVerified: true,
+          lastUsedAt: new Date(),
+          verifiedAt: params.emailVerified ? new Date() : null,
         },
         create: {
           userId: user.id,
           provider: params.provider,
           providerId: params.providerId,
-          email: normalizedEmail,
-          isVerified: true,
           isPrimary: false,
+          verifiedAt: params.emailVerified ? new Date() : null,
         },
       });
 
@@ -249,8 +222,6 @@ export class AccountIdentityService {
   async setupMfaTotp(userId: string) {
     const secret = speakeasy.generateSecret({ length: 20 });
 
-    const secretHash = this.hashToken(secret.base32);
-
     await this.prisma.mfaFactor.upsert({
       where: {
         userId_type: {
@@ -259,14 +230,13 @@ export class AccountIdentityService {
         },
       },
       update: {
-        secretHash,
-        isEnabled: false,
+        secretHash: secret.base32,
         revokedAt: null,
       },
       create: {
         userId,
         type: MfaType.TOTP,
-        secretHash,
+        secretHash: secret.base32,
       },
     });
 
@@ -279,8 +249,6 @@ export class AccountIdentityService {
   async confirmMfaTotp(params: {
     userId: string;
     code: string;
-    ipAddress: string;
-    userAgent: string;
   }) {
     const factor = await this.prisma.mfaFactor.findFirst({
       where: {
@@ -305,44 +273,14 @@ export class AccountIdentityService {
       throw new UnauthorizedException('Invalid MFA code');
     }
 
-    await this.prisma.$transaction([
-      this.prisma.mfaFactor.update({
-        where: { id: factor.id },
-        data: {
-          isEnabled: true,
-          verifiedAt: new Date(),
-          lastUsedAt: new Date(),
-        },
-      }),
-      this.prisma.session.updateMany({
-        where: { userId: params.userId },
-        data: {
-          isActive: false,
-          invalidatedAt: new Date(),
-          invalidationReason: 'MFA_ENABLED',
-        },
-      }),
-    ]);
-
-    await this.prisma.userAuditLog.create({
+    await this.prisma.mfaFactor.update({
+      where: { id: factor.id },
       data: {
-        userId: params.userId,
-        eventType: 'SECURITY',
-        eventAction: 'MFA_ENABLED',
-        ipAddress: params.ipAddress,
-        userAgent: params.userAgent,
-        success: true,
+        verifiedAt: new Date(),
+        lastUsedAt: new Date(),
       },
     });
 
     return { success: true };
-  }
-
-  /* ------------------------------------------------------------------
-   * HELPERS
-   * ------------------------------------------------------------------ */
-
-  private hashToken(value: string): string {
-    return crypto.createHash('sha256').update(value).digest('hex');
   }
 }

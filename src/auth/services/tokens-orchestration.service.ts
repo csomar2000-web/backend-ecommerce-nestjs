@@ -14,10 +14,6 @@ export class TokensOrchestrationService {
     private readonly tokenService: TokenService,
   ) { }
 
-  /* ------------------------------------------------------------------
-   * ISSUE TOKENS (used after login or MFA completion)
-   * ------------------------------------------------------------------ */
-
   async issueTokens(params: {
     userId: string;
     role: string;
@@ -42,18 +38,11 @@ export class TokensOrchestrationService {
     return { accessToken, refreshToken };
   }
 
-  /* ------------------------------------------------------------------
-   * REFRESH TOKENS (WITH MFA ENFORCEMENT)
-   * ------------------------------------------------------------------ */
-
   async refreshTokens(params: {
     refreshToken: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    /**
-     * 1️⃣ Rotate refresh token first (reuse detection stays intact)
-     */
     const rotation =
       await this.tokenService.rotateRefreshToken({
         refreshToken: params.refreshToken,
@@ -61,14 +50,13 @@ export class TokensOrchestrationService {
         userAgent: params.userAgent,
       });
 
-    /**
-     * 2️⃣ Validate session
-     */
+    const now = new Date();
+
     const session = await this.prisma.session.findFirst({
       where: {
         id: rotation.sessionId,
-        isActive: true,
-        expiresAt: { gt: new Date() },
+        revokedAt: null,
+        expiresAt: { gt: now },
       },
     });
 
@@ -76,9 +64,6 @@ export class TokensOrchestrationService {
       throw new UnauthorizedException('Session invalid');
     }
 
-    /**
-     * 3️⃣ Determine if MFA is required on refresh
-     */
     const requiresMfa = await this.requiresMfaOnRefresh({
       userId: rotation.userId,
       session,
@@ -87,9 +72,6 @@ export class TokensOrchestrationService {
     });
 
     if (requiresMfa) {
-      /**
-       * 4️⃣ Ensure an MFA challenge exists (idempotent)
-       */
       await this.prisma.mfaChallenge.upsert({
         where: {
           sessionId_factorType: {
@@ -100,35 +82,33 @@ export class TokensOrchestrationService {
         update: {
           expiresAt: new Date(Date.now() + 5 * 60 * 1000),
           satisfied: false,
-          reason: MfaChallengeReason.REFRESH,
+          reason: MfaChallengeReason.SENSITIVE_ACTION,
         },
         create: {
           userId: rotation.userId,
           sessionId: session.id,
           factorType: MfaType.TOTP,
           expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-          reason: MfaChallengeReason.REFRESH,
+          reason: MfaChallengeReason.SENSITIVE_ACTION,
         },
       });
 
-      /**
-       * ⛔ STOP HERE — do NOT issue access token
-       */
       return {
         mfaRequired: true,
-        reason: MfaChallengeReason.REFRESH,
+        reason: MfaChallengeReason.SENSITIVE_ACTION,
         sessionId: session.id,
       };
     }
 
-    /**
-     * 5️⃣ Issue new access token (MFA satisfied or not required)
-     */
     const roleAssignment =
       await this.prisma.userRoleAssignment.findFirst({
         where: {
           userId: rotation.userId,
-          isActive: true,
+          revokedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: now } },
+          ],
         },
         include: { role: true },
       });
@@ -142,12 +122,12 @@ export class TokensOrchestrationService {
     await this.prisma.userAuditLog.create({
       data: {
         userId: rotation.userId,
-        eventType: 'AUTH',
-        eventAction: 'TOKEN_REFRESH',
-        sessionId: rotation.sessionId,
+        action: 'TOKEN_REFRESH',
+        resource: 'SESSION',
+        resourceId: rotation.sessionId,
+        success: true,
         ipAddress: params.ipAddress,
         userAgent: params.userAgent,
-        success: true,
       },
     });
 
@@ -157,36 +137,24 @@ export class TokensOrchestrationService {
     };
   }
 
-  /* ------------------------------------------------------------------
-   * MFA POLICY (CENTRALIZED, EASY TO EVOLVE)
-   * ------------------------------------------------------------------ */
-
   private async requiresMfaOnRefresh(params: {
     userId: string;
     session: {
-      ipAddress: string;
-      userAgent: string;
+      ipAddress: string | null;
+      userAgent: string | null;
     };
     ipAddress: string;
     userAgent: string;
-  }): Promise<boolean> {
-    /**
-     * MFA not enabled → no enforcement
-     */
+  }) {
     const mfaFactor = await this.prisma.mfaFactor.findFirst({
       where: {
         userId: params.userId,
-        isEnabled: true,
         revokedAt: null,
       },
     });
 
     if (!mfaFactor) return false;
 
-    /**
-     * Require MFA if IP or UA changes
-     * (You can extend this later: country, risk score, admin role, etc.)
-     */
     if (
       params.session.ipAddress !== params.ipAddress ||
       params.session.userAgent !== params.userAgent
@@ -196,10 +164,6 @@ export class TokensOrchestrationService {
 
     return false;
   }
-
-  /* ------------------------------------------------------------------
-   * REVOKE SESSION
-   * ------------------------------------------------------------------ */
 
   async revokeSession(params: {
     userId: string;
@@ -211,14 +175,17 @@ export class TokensOrchestrationService {
       params.reason,
     );
 
+    await this.prisma.session.update({
+      where: { id: params.sessionId },
+      data: { revokedAt: new Date() },
+    });
+
     await this.prisma.userAuditLog.create({
       data: {
         userId: params.userId,
-        eventType: 'AUTH',
-        eventAction: 'TOKEN_REVOKE',
-        sessionId: params.sessionId,
-        ipAddress: 'unknown',
-        userAgent: 'unknown',
+        action: 'TOKEN_REVOKE',
+        resource: 'SESSION',
+        resourceId: params.sessionId,
         success: true,
         metadata: { reason: params.reason },
       },
@@ -227,18 +194,17 @@ export class TokensOrchestrationService {
     return { success: true };
   }
 
-  /* ------------------------------------------------------------------
-   * REVOKE ALL SESSIONS
-   * ------------------------------------------------------------------ */
-
   async revokeAllSessions(params: {
     userId: string;
     reason: string;
   }) {
+    const now = new Date();
+
     const sessions = await this.prisma.session.findMany({
       where: {
         userId: params.userId,
-        isActive: true,
+        revokedAt: null,
+        expiresAt: { gt: now },
       },
       select: { id: true },
     });
@@ -248,15 +214,17 @@ export class TokensOrchestrationService {
         session.id,
         params.reason,
       );
+
+      await this.prisma.session.update({
+        where: { id: session.id },
+        data: { revokedAt: new Date() },
+      });
     }
 
     await this.prisma.userAuditLog.create({
       data: {
         userId: params.userId,
-        eventType: 'AUTH',
-        eventAction: 'TOKEN_REVOKE_ALL',
-        ipAddress: 'unknown',
-        userAgent: 'unknown',
+        action: 'TOKEN_REVOKE_ALL',
         success: true,
         metadata: { reason: params.reason },
       },
@@ -265,36 +233,9 @@ export class TokensOrchestrationService {
     return { success: true };
   }
 
-  /* ------------------------------------------------------------------
-   * MAINTENANCE
-   * ------------------------------------------------------------------ */
-
-  async cleanupExpiredTokens() {
-    const now = new Date();
-
-    await this.prisma.refreshToken.deleteMany({
-      where: { expiresAt: { lt: now } },
-    });
-
-    await this.prisma.session.updateMany({
-      where: { expiresAt: { lt: now } },
-      data: {
-        isActive: false,
-        invalidatedAt: now,
-        invalidationReason: 'SESSION_EXPIRED',
-      },
-    });
-
-    return { success: true };
-  }
-
-  /* ------------------------------------------------------------------
-   * BLACKLIST CHECK
-   * ------------------------------------------------------------------ */
-
-  async detectBlacklistedAccessToken(tokenHash: string) {
+  async detectBlacklistedAccessToken(token: string) {
     const record = await this.prisma.tokenBlacklist.findUnique({
-      where: { tokenHash },
+      where: { token },
     });
 
     if (record && record.expiresAt > new Date()) {

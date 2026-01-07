@@ -5,15 +5,9 @@ import {
     ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { TokenService } from '../token/token.service';
 import { SessionsDevicesService } from './sessions-devices.service';
-import { SecurityAbuseService } from './security-abuse.service';
 import { MailService } from '../../mail/mail.service';
-import {
-    AuthProvider,
-    MfaType,
-    MfaChallengeReason,
-} from '@prisma/client';
+import { AuthProvider, MfaType, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -24,14 +18,12 @@ const PASSWORD_MIN_LENGTH = 10;
 export class CredentialsPasswordsService {
     constructor(
         private readonly prisma: PrismaService,
-        private readonly tokenService: TokenService,
         private readonly sessions: SessionsDevicesService,
-        private readonly abuse: SecurityAbuseService,
         private readonly mail: MailService,
     ) { }
 
     /* ------------------------------------------------------------------ */
-    /* LOGIN (MFA-AWARE)                                                   */
+    /* LOGIN                                                              */
     /* ------------------------------------------------------------------ */
 
     async login(params: {
@@ -39,12 +31,8 @@ export class CredentialsPasswordsService {
         password: string;
         ipAddress: string;
         userAgent: string;
-        deviceId?: string;
-        deviceName?: string;
     }) {
         const email = params.email.toLowerCase().trim();
-
-        await this.abuse.assertLoginAllowed({ identifier: email });
 
         const account = await this.prisma.authAccount.findFirst({
             where: {
@@ -55,11 +43,10 @@ export class CredentialsPasswordsService {
         });
 
         if (!account || !account.passwordHash) {
-            await this.recordLoginFailure(email, params);
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        if (!account.isVerified) {
+        if (account.verifiedAt === null) {
             throw new ForbiddenException('Email not verified');
         }
 
@@ -69,105 +56,47 @@ export class CredentialsPasswordsService {
         );
 
         if (!valid) {
-            await this.recordLoginFailure(email, params);
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        await this.abuse.clearLoginFailures(email);
-
-        /**
-         * 1️⃣ Create session (but DO NOT issue tokens yet)
-         */
+        // Create session
         const session = await this.sessions.createSession({
             userId: account.user.id,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
-            deviceId: params.deviceId,
-            deviceName: params.deviceName,
         });
 
-        /**
-         * 2️⃣ Check if MFA is enabled
-         */
-        const mfaFactor = await this.prisma.mfaFactor.findFirst({
+        // Check if MFA exists (simple enforcement)
+        const mfaEnabled = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: account.user.id,
-                isEnabled: true,
                 revokedAt: null,
+                verifiedAt: { not: null },
             },
         });
 
-        if (mfaFactor) {
-            /**
-             * 3️⃣ Create MFA challenge (idempotent)
-             */
-            await this.prisma.mfaChallenge.upsert({
-                where: {
-                    sessionId_factorType: {
-                        sessionId: session.id,
-                        factorType: MfaType.TOTP,
-                    },
-                },
-                update: {
-                    satisfied: false,
-                    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-                    reason: MfaChallengeReason.LOGIN,
-                },
-                create: {
-                    userId: account.user.id,
-                    sessionId: session.id,
-                    factorType: MfaType.TOTP,
-                    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-                    reason: MfaChallengeReason.LOGIN,
-                },
-            });
-
+        if (mfaEnabled) {
             return {
                 mfaRequired: true,
-                reason: MfaChallengeReason.LOGIN,
                 sessionId: session.id,
             };
         }
 
-        /**
-         * 4️⃣ MFA not enabled → issue tokens
-         */
-        const accessToken = this.tokenService.generateAccessToken(
-            account.user.id,
-            'CUSTOMER',
-            session.id,
-        );
-
-        const { refreshToken } =
-            await this.tokenService.generateRefreshToken({
-                userId: account.user.id,
-                sessionId: session.id,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            });
-
-        await this.mail.sendSecurityAlert(account.user.email, {
-            type: 'NEW_DEVICE_LOGIN',
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-        });
-
         await this.prisma.userAuditLog.create({
             data: {
                 userId: account.user.id,
-                eventType: 'AUTH',
-                eventAction: 'LOGIN_SUCCESS',
+                action: 'LOGIN_SUCCESS',
+                success: true,
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
-                success: true,
             },
         });
 
-        return { accessToken, refreshToken };
+        return { sessionId: session.id };
     }
 
     /* ------------------------------------------------------------------ */
-    /* PASSWORD RESET (UNCHANGED, BUT SECURE)                              */
+    /* PASSWORD RESET                                                     */
     /* ------------------------------------------------------------------ */
 
     async requestPasswordReset(params: {
@@ -177,35 +106,27 @@ export class CredentialsPasswordsService {
     }) {
         const email = params.email.toLowerCase().trim();
 
-        await this.abuse.assertSensitiveActionAllowed({
-            identifier: email,
-            type: 'PASSWORD_RESET',
-        });
-
         const user = await this.prisma.user.findUnique({
             where: { email },
         });
 
         if (!user) return { success: true };
 
-        const rawToken = crypto.randomBytes(48).toString('hex');
-        const tokenHash = this.hashToken(rawToken);
+        const token = crypto.randomBytes(48).toString('hex');
 
         await this.prisma.passwordReset.create({
             data: {
                 userId: user.id,
-                tokenHash,
+                token,
                 expiresAt: new Date(
                     Date.now() + RESET_TOKEN_TTL_HOURS * 3600000,
                 ),
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
             },
         });
 
         await this.mail.sendPasswordReset(
             user.email,
-            `${process.env.FRONTEND_URL}/reset-password?token=${rawToken}`,
+            `${process.env.FRONTEND_URL}/reset-password?token=${token}`,
         );
 
         return { success: true };
@@ -221,12 +142,10 @@ export class CredentialsPasswordsService {
             throw new BadRequestException('Password too weak');
         }
 
-        const tokenHash = this.hashToken(params.token);
-
         const reset = await this.prisma.passwordReset.findFirst({
             where: {
-                tokenHash,
-                used: false,
+                token: params.token,
+                usedAt: null,
                 expiresAt: { gt: new Date() },
             },
         });
@@ -247,29 +166,21 @@ export class CredentialsPasswordsService {
             }),
             this.prisma.passwordReset.update({
                 where: { id: reset.id },
-                data: {
-                    used: true,
-                    usedAt: new Date(),
-                },
+                data: { usedAt: new Date() },
             }),
             this.prisma.session.updateMany({
-                where: { userId: reset.userId },
-                data: {
-                    isActive: false,
-                    invalidatedAt: new Date(),
-                    invalidationReason: 'PASSWORD_RESET',
-                },
+                where: { userId: reset.userId, revokedAt: null },
+                data: { revokedAt: new Date() },
             }),
         ]);
 
         await this.prisma.userAuditLog.create({
             data: {
                 userId: reset.userId,
-                eventType: 'SECURITY',
-                eventAction: 'PASSWORD_RESET',
+                action: 'PASSWORD_RESET',
+                success: true,
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
-                success: true,
             },
         });
 
@@ -277,7 +188,7 @@ export class CredentialsPasswordsService {
     }
 
     /* ------------------------------------------------------------------ */
-    /* PASSWORD CHANGE (RECOMMENDED: REQUIRE MFA VIA CONTROLLER)           */
+    /* PASSWORD CHANGE                                                    */
     /* ------------------------------------------------------------------ */
 
     async changePassword(params: {
@@ -319,45 +230,21 @@ export class CredentialsPasswordsService {
                 data: { passwordHash: newHash },
             }),
             this.prisma.session.updateMany({
-                where: { userId: params.userId },
-                data: {
-                    isActive: false,
-                    invalidatedAt: new Date(),
-                    invalidationReason: 'PASSWORD_CHANGED',
-                },
+                where: { userId: params.userId, revokedAt: null },
+                data: { revokedAt: new Date() },
             }),
         ]);
 
         await this.prisma.userAuditLog.create({
             data: {
                 userId: params.userId,
-                eventType: 'SECURITY',
-                eventAction: 'PASSWORD_CHANGED',
+                action: 'PASSWORD_CHANGED',
+                success: true,
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
-                success: true,
             },
         });
 
         return { success: true };
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* HELPERS                                                            */
-    /* ------------------------------------------------------------------ */
-
-    private async recordLoginFailure(
-        identifier: string,
-        params: { ipAddress: string; userAgent: string },
-    ) {
-        await this.abuse.recordFailedLogin({
-            identifier,
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-        });
-    }
-
-    private hashToken(token: string): string {
-        return crypto.createHash('sha256').update(token).digest('hex');
     }
 }

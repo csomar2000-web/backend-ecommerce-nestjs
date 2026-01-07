@@ -42,12 +42,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    if (
-      !payload ||
-      !payload.sub ||
-      !payload.sessionId ||
-      !payload.jti
-    ) {
+    if (!payload?.sub || !payload.sessionId || !payload.jti) {
       throw new UnauthorizedException('Invalid token');
     }
 
@@ -62,12 +57,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       where: {
         id: payload.sessionId,
         userId: payload.sub,
-        isActive: true,
+        revokedAt: null,
         expiresAt: { gt: new Date() },
       },
       select: {
         id: true,
-        expiresAt: true,
       },
     });
 

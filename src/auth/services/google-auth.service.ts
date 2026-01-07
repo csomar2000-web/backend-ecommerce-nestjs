@@ -31,12 +31,10 @@ export class GoogleAuthService {
             throw new UnauthorizedException('Invalid Google token payload');
         }
 
-        const validIssuers = [
-            'accounts.google.com',
-            'https://accounts.google.com',
-        ];
-
-        if (!validIssuers.includes(payload.iss ?? '')) {
+        if (
+            payload.iss !== 'accounts.google.com' &&
+            payload.iss !== 'https://accounts.google.com'
+        ) {
             throw new UnauthorizedException('Invalid Google token issuer');
         }
 
@@ -44,9 +42,11 @@ export class GoogleAuthService {
             providerId: payload.sub,
             email: payload.email ?? null,
             emailVerified: payload.email_verified === true,
-            name: payload.name,
-            avatar: payload.picture,
+            name: payload.name ?? undefined,
+            avatar: payload.picture ?? undefined,
         };
+
+
+
     }
 }
-

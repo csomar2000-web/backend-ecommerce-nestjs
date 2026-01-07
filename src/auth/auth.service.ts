@@ -1,5 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { Request } from 'express';
+import {
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 
 import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
@@ -144,7 +146,8 @@ export class AuthService {
       identifier: 'facebook',
     });
 
-    const profile = await this.facebookAuth.verifyAccessToken(dto.accessToken);
+    const profile =
+      await this.facebookAuth.verifyAccessToken(dto.accessToken);
 
     return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, dto);
   }
@@ -172,8 +175,6 @@ export class AuthService {
         providerId: profile.providerId,
         email: profile.email,
         emailVerified: profile.emailVerified,
-        name: profile.name,
-        avatarUrl: profile.avatar,
       });
 
     const session = await this.sessions.createSession({
@@ -184,18 +185,16 @@ export class AuthService {
 
     await this.audit.audit({
       userId: user.id,
-      eventType: 'AUTH',
-      eventAction: 'SOCIAL_LOGIN',
+      action: 'SOCIAL_LOGIN',
       success: true,
       ipAddress: context.ipAddress,
       userAgent: context.userAgent,
+      resource: 'AUTH_ACCOUNT',
+      resourceId: authAccount.id,
       metadata: {
         provider,
-        authAccountId: authAccount.id,
       },
     });
-
-
 
     return this.tokens.issueTokens({
       userId: user.id,
@@ -204,6 +203,5 @@ export class AuthService {
       ipAddress: context.ipAddress,
       userAgent: context.userAgent,
     });
-
   }
 }

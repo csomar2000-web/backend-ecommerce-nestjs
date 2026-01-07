@@ -25,10 +25,13 @@ model User {
   updatedAt   DateTime   @updatedAt
 
   // Relations
-  authAccounts    AuthAccount[]
-  sessions        Session[]
-  roleAssignments UserRoleAssignment[]
-
+  authAccounts         AuthAccount[]
+  sessions             Session[]
+  roleAssignments      UserRoleAssignment[]
+  refreshTokens        RefreshToken[]
+  securityEvents       SecurityEvent[]
+  mfaChallenges        MfaChallenge[]
+  permissionOverrides  UserPermissionOverride[]
   // Profile types (one-to-one relationships)
   customerProfile      CustomerProfile?
   workerProfile        WorkerProfile?
@@ -88,16 +91,19 @@ enum AuthProvider {
 ////////////////////////
 
 model Session {
-  id           String    @id @default(cuid())
-  userId       String
-  sessionToken String    @unique
-  ipAddress    String?
-  userAgent    String?
-  deviceInfo   String?
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id            String         @id @default(cuid())
+  userId        String
+  sessionToken  String         @unique
+  ipAddress     String?
+  userAgent     String?
+  deviceInfo    String?
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  refreshTokens RefreshToken[]
+  mfaChallenges MfaChallenge[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -208,22 +214,23 @@ model WorkerProfile {
 ////////////////////////
 
 model Company {
-  id          String        @id @default(cuid())
-  ownerId     String
-  name        String
-  slug        String        @unique
-  description String?
-  logo        String?
-  website     String?
-  industry    String?
-  status      CompanyStatus @default(PENDING)
-  verifiedAt  DateTime?
-  suspendedAt DateTime?
-  closedAt    DateTime?
-  deletedAt   DateTime?
-  metadata    Json?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                  String                   @id @default(cuid())
+  ownerId             String
+  name                String
+  slug                String                   @unique
+  description         String?
+  logo                String?
+  website             String?
+  industry            String?
+  status              CompanyStatus            @default(PENDING)
+  verifiedAt          DateTime?
+  suspendedAt         DateTime?
+  closedAt            DateTime?
+  deletedAt           DateTime?
+  metadata            Json?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  permissionOverrides UserPermissionOverride[]
 
   owner           BusinessOwnerProfile @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   workers         WorkerProfile[]
@@ -264,11 +271,12 @@ model Role {
 }
 
 model Permission {
-  id          String   @id @default(cuid())
-  resource    String
-  action      String
-  description String?
-  createdAt   DateTime @default(now())
+  id            String                   @id @default(cuid())
+  resource      String
+  action        String
+  description   String?
+  userOverrides UserPermissionOverride[]
+  createdAt     DateTime                 @default(now())
 
   roles RolePermission[]
 
@@ -434,4 +442,99 @@ model RateLimit {
   @@unique([identifier, action, windowStart])
   @@index([expiresAt])
   @@map("rate_limits")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  sessionId String
+  token     String    @unique
+  ipAddress String?
+  userAgent String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model TokenBlacklist {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("token_blacklist")
+}
+
+model SecurityEvent {
+  id          String   @id @default(cuid())
+  userId      String?
+  email       String?
+  eventType   String
+  severity    String
+  description String
+  ipAddress   String?
+  userAgent   String?
+  blocked     Boolean  @default(false)
+  actionTaken String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("security_events")
+}
+
+model MfaChallenge {
+  id         String             @id @default(cuid())
+  userId     String
+  sessionId  String
+  factorType MfaType
+  reason     MfaChallengeReason
+  satisfied  Boolean            @default(false)
+  expiresAt  DateTime
+  createdAt  DateTime           @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, factorType])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("mfa_challenges")
+}
+
+enum MfaChallengeReason {
+  LOGIN
+  SENSITIVE_ACTION
+}
+
+model UserPermissionOverride {
+  id           String    @id @default(cuid())
+  userId       String
+  permissionId String
+  companyId    String?
+  isGranted    Boolean
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  company    Company?   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionId, companyId])
+  @@index([expiresAt])
+  @@map("user_permission_overrides")
 }

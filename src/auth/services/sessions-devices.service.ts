@@ -19,16 +19,25 @@ export class SessionsDevicesService {
     userId: string;
     ipAddress: string;
     userAgent: string;
-    deviceId?: string;
-    deviceName?: string;
+    deviceInfo?: string;
   }) {
+    const now = new Date();
+
     const activeSessions = await this.prisma.session.count({
-      where: { userId: params.userId, isActive: true },
+      where: {
+        userId: params.userId,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
     });
 
     if (activeSessions >= MAX_ACTIVE_SESSIONS) {
       const oldestSession = await this.prisma.session.findFirst({
-        where: { userId: params.userId, isActive: true },
+        where: {
+          userId: params.userId,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
         orderBy: { createdAt: 'asc' },
       });
 
@@ -44,10 +53,10 @@ export class SessionsDevicesService {
     return this.prisma.session.create({
       data: {
         userId: params.userId,
+        sessionToken: crypto.randomUUID(),
         ipAddress: params.ipAddress,
         userAgent: params.userAgent,
-        deviceId: params.deviceId,
-        deviceName: params.deviceName,
+        deviceInfo: params.deviceInfo,
         expiresAt: new Date(
           Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000,
         ),
@@ -56,19 +65,22 @@ export class SessionsDevicesService {
   }
 
   async listSessions(userId: string) {
+    const now = new Date();
+
     return this.prisma.session.findMany({
-      where: { userId },
-      orderBy: { lastActivityAt: 'desc' },
+      where: {
+        userId,
+        expiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         ipAddress: true,
         userAgent: true,
-        deviceId: true,
-        deviceName: true,
-        isActive: true,
+        deviceInfo: true,
         expiresAt: true,
+        revokedAt: true,
         createdAt: true,
-        lastActivityAt: true,
       },
     });
   }
@@ -78,11 +90,14 @@ export class SessionsDevicesService {
     sessionId: string;
     accessToken: string;
   }) {
+    const now = new Date();
+
     const session = await this.prisma.session.findFirst({
       where: {
         id: params.sessionId,
         userId: params.userId,
-        isActive: true,
+        revokedAt: null,
+        expiresAt: { gt: now },
       },
     });
 
@@ -127,6 +142,8 @@ export class SessionsDevicesService {
     userId: string;
     accessToken: string;
   }) {
+    const now = new Date();
+
     await this.tokenService.blacklistAccessTokenFromJwt(
       params.accessToken,
       'USER_LOGOUT_ALL',
@@ -135,7 +152,8 @@ export class SessionsDevicesService {
     const sessions = await this.prisma.session.findMany({
       where: {
         userId: params.userId,
-        isActive: true,
+        revokedAt: null,
+        expiresAt: { gt: now },
       },
       select: { id: true },
     });
@@ -151,7 +169,6 @@ export class SessionsDevicesService {
     return { success: true };
   }
 
-
   private async invalidateSession(params: {
     userId: string;
     sessionId: string;
@@ -162,15 +179,20 @@ export class SessionsDevicesService {
       params.reason,
     );
 
+    await this.prisma.session.update({
+      where: { id: params.sessionId },
+      data: { revokedAt: new Date() },
+    });
+
     await this.prisma.userAuditLog.create({
       data: {
         userId: params.userId,
-        eventType: 'AUTH',
-        eventAction: 'SESSION_INVALIDATED',
-        sessionId: params.sessionId,
+        action: 'SESSION_INVALIDATED',
+        resource: 'SESSION',
+        resourceId: params.sessionId,
+        success: true,
         ipAddress: 'unknown',
         userAgent: 'unknown',
-        success: true,
         metadata: { reason: params.reason },
       },
     });

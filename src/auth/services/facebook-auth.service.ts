@@ -14,14 +14,17 @@ export class FacebookAuthService {
             `${this.graphUrl}/debug_token?input_token=${accessToken}&access_token=${process.env.FACEBOOK_APP_ID}|${process.env.FACEBOOK_APP_SECRET}`,
         );
 
-        const debug = await debugRes.json();
-
-        if (!debug?.data?.is_valid) {
+        if (!debugRes.ok) {
             throw new UnauthorizedException('Invalid Facebook access token');
         }
 
-        if (debug.data.app_id !== process.env.FACEBOOK_APP_ID) {
-            throw new UnauthorizedException('Facebook token does not belong to this app');
+        const debug = await debugRes.json();
+
+        if (
+            !debug?.data?.is_valid ||
+            debug.data.app_id !== process.env.FACEBOOK_APP_ID
+        ) {
+            throw new UnauthorizedException('Invalid Facebook access token');
         }
 
         const profileRes = await fetch(
@@ -42,8 +45,8 @@ export class FacebookAuthService {
             providerId: data.id,
             email: data.email ?? null,
             emailVerified: true,
-            name: data.name,
-            avatar: data.picture?.data?.url,
+            name: data.name ?? null,
+            avatar: data.picture?.data?.url ?? null,
         };
     }
 }

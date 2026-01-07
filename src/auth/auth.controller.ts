@@ -8,18 +8,30 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
+// Auth
 import { RegisterDto } from './dto/auth/register.dto';
 import { LoginDto } from './dto/auth/login.dto';
 import { RefreshTokenDto } from './dto/auth/refresh-token.dto';
+
+// Email
 import { VerifyEmailDto } from './dto/email/verify-email.dto';
 import { ResendVerificationDto } from './dto/email/resend-verification.dto';
-import { PasswordResetRequestDto } from './dto/password-reset.dto';
-import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
-import { PasswordChangeDto } from './dto/password-change.dto';
+
+// Password (✅ fixed)
+import {
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  ChangePasswordDto,
+} from './dto/password';
+
+// Sessions
 import { RevokeSessionDto } from './dto/session/revoke-session.dto';
+
+// OAuth
 import { GoogleAuthDto } from './dto/oauth/google-auth.dto';
 import { FacebookAuthDto } from './dto/oauth/facebook-auth.dto';
 
@@ -87,9 +99,11 @@ export class AuthController {
     });
   }
 
+  // 🔐 Password reset (✅ fixed DTO names)
+
   @Post('password-reset')
   requestPasswordReset(
-    @Body() dto: PasswordResetRequestDto,
+    @Body() dto: ForgotPasswordDto,
     @Req() req: Request,
   ) {
     return this.auth.requestPasswordReset({
@@ -100,18 +114,20 @@ export class AuthController {
   }
 
   @Post('password-reset/confirm')
-  confirmPasswordReset(@Body() dto: PasswordResetConfirmDto) {
+  confirmPasswordReset(@Body() dto: ResetPasswordDto) {
     return this.auth.confirmPasswordReset(dto);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('password-change')
-  changePassword(@Req() req: any, @Body() dto: PasswordChangeDto) {
+  changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
     return this.auth.changePassword({
       userId: req.user.userId,
       ...dto,
     });
   }
+
+  // 🔑 Sessions
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
@@ -130,6 +146,8 @@ export class AuthController {
       accessToken,
     });
   }
+
+  // 🌐 OAuth
 
   @Post('google')
   googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {

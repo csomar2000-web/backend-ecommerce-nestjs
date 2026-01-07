@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const LOGIN_LIMIT = 5;
@@ -17,20 +14,16 @@ type SensitiveActionType =
 
 @Injectable()
 export class SecurityAbuseService {
-  constructor(
-    private readonly prisma: PrismaService,
-  ) { }
+  constructor(private readonly prisma: PrismaService) { }
 
-  async assertLoginAllowed(params: {
-    identifier: string;
-  }) {
+  async assertLoginAllowed(params: { identifier: string }) {
     const now = new Date();
 
     const activeBlock = await this.prisma.rateLimit.findFirst({
       where: {
         identifier: params.identifier,
-        isBlocked: true,
-        blockedUntil: { gt: now },
+        action: 'LOGIN_BLOCK',
+        expiresAt: { gt: now },
       },
     });
 
@@ -45,7 +38,7 @@ export class SecurityAbuseService {
     const attempts = await this.prisma.rateLimit.count({
       where: {
         identifier: params.identifier,
-        limitType: 'LOGIN',
+        action: 'LOGIN',
         windowStart: { gte: windowStart },
       },
     });
@@ -54,8 +47,6 @@ export class SecurityAbuseService {
       await this.blockIdentifier(params.identifier);
       throw new ForbiddenException('Temporarily blocked');
     }
-
-    return true;
   }
 
   async recordFailedLogin(params: {
@@ -68,22 +59,11 @@ export class SecurityAbuseService {
     await this.prisma.rateLimit.create({
       data: {
         identifier: params.identifier,
-        limitType: 'LOGIN',
+        action: 'LOGIN',
         windowStart: now,
-        windowEnd: new Date(
+        expiresAt: new Date(
           now.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
         ),
-      },
-    });
-
-    await this.prisma.securityEvent.create({
-      data: {
-        email: params.identifier,
-        eventType: 'BRUTE_FORCE',
-        severity: 'HIGH',
-        description: 'Failed login attempt',
-        ipAddress: params.ipAddress,
-        userAgent: params.userAgent,
       },
     });
   }
@@ -92,51 +72,22 @@ export class SecurityAbuseService {
     await this.prisma.rateLimit.deleteMany({
       where: {
         identifier,
-        limitType: 'LOGIN',
+        action: 'LOGIN',
       },
     });
   }
 
   async blockIdentifier(identifier: string) {
     const now = new Date();
-    const blockedUntil = new Date(
-      now.getTime() + BLOCK_MINUTES * 60 * 1000,
-    );
 
     await this.prisma.rateLimit.create({
       data: {
         identifier,
-        limitType: 'LOGIN_BLOCK',
+        action: 'LOGIN_BLOCK',
         windowStart: now,
-        windowEnd: blockedUntil,
-        isBlocked: true,
-        blockedUntil,
-      },
-    });
-
-    await this.prisma.securityEvent.create({
-      data: {
-        email: identifier,
-        eventType: 'ACCOUNT_LOCKOUT',
-        severity: 'CRITICAL',
-        description: 'Account temporarily locked',
-        ipAddress: 'unknown',
-        userAgent: 'unknown',
-      },
-    });
-  }
-
-  async unblockExpired() {
-    const now = new Date();
-
-    await this.prisma.rateLimit.updateMany({
-      where: {
-        isBlocked: true,
-        blockedUntil: { lt: now },
-      },
-      data: {
-        isBlocked: false,
-        blockedUntil: null,
+        expiresAt: new Date(
+          now.getTime() + BLOCK_MINUTES * 60 * 1000,
+        ),
       },
     });
   }
@@ -154,7 +105,7 @@ export class SecurityAbuseService {
     const attempts = await this.prisma.rateLimit.count({
       where: {
         identifier: params.identifier,
-        limitType: params.type,
+        action: params.type,
         windowStart: { gte: windowStart },
       },
     });
@@ -166,14 +117,12 @@ export class SecurityAbuseService {
     await this.prisma.rateLimit.create({
       data: {
         identifier: params.identifier,
-        limitType: params.type,
+        action: params.type,
         windowStart: now,
-        windowEnd: new Date(
+        expiresAt: new Date(
           now.getTime() + SENSITIVE_WINDOW_MINUTES * 60 * 1000,
         ),
       },
     });
-
-    return true;
   }
 }
