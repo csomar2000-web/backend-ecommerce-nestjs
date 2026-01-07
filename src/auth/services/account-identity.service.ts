@@ -38,7 +38,7 @@ export class AccountIdentityService {
       throw new BadRequestException('Passwords do not match');
     }
 
-    if (!/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}/.test(password)) {
+    if (!/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}/.test(password)) {
       throw new BadRequestException('Weak password');
     }
 

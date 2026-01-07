@@ -12,6 +12,9 @@ import { AuthorizationService } from './services/authorization.service';
 import { SecurityAbuseService } from './services/security-abuse.service';
 import { AuditObservabilityService } from './services/audit-observability.service';
 
+import { GoogleAuthService } from './services/google-auth.service';
+import { FacebookAuthService } from './services/facebook-auth.service';
+
 @Module({
   imports: [
     TokenModule,
@@ -27,6 +30,8 @@ import { AuditObservabilityService } from './services/audit-observability.servic
     AuthorizationService,
     SecurityAbuseService,
     AuditObservabilityService,
+    GoogleAuthService,
+    FacebookAuthService,
   ],
   exports: [AuthService],
 })

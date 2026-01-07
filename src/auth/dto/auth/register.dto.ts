@@ -12,7 +12,7 @@ export class RegisterDto {
   email: string;
 
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   @Matches(/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9])/, {
     message:
       'Password must include upper, lower, number, and special character',
