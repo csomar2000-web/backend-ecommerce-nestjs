@@ -142,4 +142,14 @@ export class AuthController {
     }
     return header.slice(7);
   }
+
+  @Post('google')
+  async googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
+    return this.authService.loginWithGoogle(dto.idToken, req);
+  }
+
+  @Post('facebook')
+  async facebookAuth(@Body() dto: FacebookAuthDto, @Req() req: Request) {
+    return this.authService.loginWithFacebook(dto.accessToken, req);
+  }
 }
