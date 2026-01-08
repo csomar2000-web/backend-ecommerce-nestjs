@@ -41,10 +41,9 @@ export class CredentialsPasswordsService {
         userAgent: string;
     }) {
         const email = params.email.toLowerCase().trim();
+        const identifier = `${email}:${params.ipAddress}`;
 
-        await this.abuse.assertLoginAllowed({
-            identifier: `${email}:${params.ipAddress}`,
-        });
+        await this.abuse.assertLoginAllowed({ identifier });
 
         const account = await this.prisma.authAccount.findFirst({
             where: {
@@ -54,46 +53,43 @@ export class CredentialsPasswordsService {
             include: { user: true },
         });
 
-        if (!account || !account.passwordHash) {
+        if (!account || !account.passwordHash || !account.verifiedAt) {
             await this.abuse.recordFailedLogin({
-                identifier: `${email}:${params.ipAddress}`,
+                identifier,
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
             });
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        if (!account.verifiedAt) {
-            throw new ForbiddenException('Email not verified');
-        }
+        const passwordHash: string = account.passwordHash;
+        const userId: string = account.user.id;
 
         const passwordValid = await bcrypt.compare(
             params.password,
-            account.passwordHash,
+            passwordHash,
         );
 
         if (!passwordValid) {
             await this.abuse.recordFailedLogin({
-                identifier: `${email}:${params.ipAddress}`,
+                identifier,
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
             });
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        await this.abuse.clearLoginFailures(
-            `${email}:${params.ipAddress}`,
-        );
+        await this.abuse.clearLoginFailures(identifier);
 
         const session = await this.sessions.createSession({
-            userId: account.user.id,
+            userId,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
         });
 
         const mfaFactor = await this.prisma.mfaFactor.findFirst({
             where: {
-                userId: account.user.id,
+                userId,
                 type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
@@ -104,12 +100,12 @@ export class CredentialsPasswordsService {
             return {
                 mfaRequired: true,
                 sessionId: session.id,
-                userId: account.user.id,
+                userId,
             };
         }
 
         return {
-            userId: account.user.id,
+            userId,
             sessionId: session.id,
         };
     }
@@ -129,7 +125,7 @@ export class CredentialsPasswordsService {
         });
 
         if (!factor) {
-            throw new UnauthorizedException('MFA not enabled');
+            throw new UnauthorizedException('Invalid MFA code');
         }
 
         const valid = speakeasy.totp.verify({
