@@ -13,8 +13,16 @@ import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
 
 const RESET_TOKEN_TTL_HOURS = 1;
-const PASSWORD_MIN_LENGTH = 8;
 const BCRYPT_ROUNDS = 12;
+
+const PASSWORD_REGEX =
+    /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+function assertStrongPassword(password: string) {
+    if (!PASSWORD_REGEX.test(password)) {
+        throw new BadRequestException('Password too weak');
+    }
+}
 
 @Injectable()
 export class CredentialsPasswordsService {
@@ -94,6 +102,7 @@ export class CredentialsPasswordsService {
         const factor = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: params.userId,
+                type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
             },
@@ -121,7 +130,6 @@ export class CredentialsPasswordsService {
 
         return { success: true };
     }
-
 
     async requestPasswordReset(params: {
         email: string;
@@ -164,9 +172,7 @@ export class CredentialsPasswordsService {
         ipAddress: string;
         userAgent: string;
     }) {
-        if (params.newPassword.length < PASSWORD_MIN_LENGTH) {
-            throw new BadRequestException('Password too weak');
-        }
+        assertStrongPassword(params.newPassword);
 
         const reset = await this.prisma.passwordReset.findFirst({
             where: {
@@ -213,9 +219,7 @@ export class CredentialsPasswordsService {
         ipAddress: string;
         userAgent: string;
     }) {
-        if (params.newPassword.length < PASSWORD_MIN_LENGTH) {
-            throw new BadRequestException('Password too weak');
-        }
+        assertStrongPassword(params.newPassword);
 
         const account = await this.prisma.authAccount.findFirst({
             where: {
