@@ -19,10 +19,33 @@ const BCRYPT_ROUNDS = 12;
 const PASSWORD_REGEX =
     /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
+const MFA_KEY = Buffer.from(process.env.MFA_SECRET_KEY!, 'hex');
+
 function assertStrongPassword(password: string) {
     if (!PASSWORD_REGEX.test(password)) {
         throw new BadRequestException('Password too weak');
     }
+}
+
+function decrypt(data: {
+    cipherText: string;
+    iv: string;
+    authTag: string;
+}) {
+    const decipher = crypto.createDecipheriv(
+        'aes-256-gcm',
+        MFA_KEY,
+        Buffer.from(data.iv, 'base64'),
+    );
+
+    decipher.setAuthTag(Buffer.from(data.authTag, 'base64'));
+
+    const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(data.cipherText, 'base64')),
+        decipher.final(),
+    ]);
+
+    return decrypted.toString('utf8');
 }
 
 @Injectable()
@@ -125,8 +148,14 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('Invalid MFA code');
         }
 
+        const secret = decrypt({
+            cipherText: factor.secretCipher,
+            iv: factor.secretIv,
+            authTag: factor.secretTag,
+        });
+
         const valid = speakeasy.totp.verify({
-            secret: factor.secretHash,
+            secret,
             encoding: 'base32',
             token: params.code,
             window: 1,

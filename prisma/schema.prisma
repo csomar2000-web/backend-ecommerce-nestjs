@@ -342,23 +342,21 @@ model GuestCheckout {
 ////////////////////////
 
 model MfaFactor {
-  id          String    @id @default(cuid())
-  userId      String
-  type        MfaType
-  name        String?
-  secretHash  String
-  backupCodes Json?
-  verifiedAt  DateTime?
-  lastUsedAt  DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id     String  @id @default(cuid())
+  userId String
+  type   MfaType
+
+  secretCipher String
+  secretIv     String
+  secretTag    String
+
+  verifiedAt DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, type])
-  @@index([userId, revokedAt])
-  @@map("mfa_factors")
 }
 
 enum MfaType {
