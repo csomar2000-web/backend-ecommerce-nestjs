@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
 import { SessionsDevicesService } from './services/sessions-devices.service';
@@ -45,7 +42,12 @@ export class AuthService {
     return this.accountIdentity.resendVerification(email);
   }
 
-  async login(dto: any) {
+  async login(dto: {
+    email: string;
+    password: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
     await this.security.assertLoginAllowed({
       identifier: dto.email,
     });
@@ -73,6 +75,28 @@ export class AuthService {
       });
       throw error;
     }
+  }
+
+  async completeMfa(dto: {
+    userId: string;
+    sessionId: string;
+    mfaCode: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
+    await this.credentials.verifyMfaCode({
+      userId: dto.userId,
+      sessionId: dto.sessionId,
+      code: dto.mfaCode,
+    });
+
+    return this.tokens.issueTokens({
+      userId: dto.userId,
+      sessionId: dto.sessionId,
+      role: 'CUSTOMER',
+      ipAddress: dto.ipAddress,
+      userAgent: dto.userAgent,
+    });
   }
 
   refresh(dto: any) {
@@ -121,6 +145,7 @@ export class AuthService {
     });
 
     const profile = await this.googleAuth.verifyIdToken(dto.idToken);
+
     return this.handleSocialLogin(AuthProvider.GOOGLE, profile, dto);
   }
 
@@ -144,12 +169,8 @@ export class AuthService {
     profile: SocialProfile,
     context: { ipAddress: string; userAgent: string },
   ) {
-    if (!profile.email) {
-      throw new UnauthorizedException('Social account has no email');
-    }
-
-    if (!profile.emailVerified) {
-      throw new UnauthorizedException('Email is not verified');
+    if (!profile.email || !profile.emailVerified) {
+      throw new UnauthorizedException();
     }
 
     const { user, authAccount } =
@@ -185,26 +206,4 @@ export class AuthService {
       userAgent: context.userAgent,
     });
   }
-  async completeMfa(dto: {
-    userId: string;
-    mfaCode: string;
-    sessionId: string;
-    ipAddress: string;
-    userAgent: string;
-  }) {
-    const mfaResult = await this.credentials.verifyMfaCode(dto);
-
-    if (!mfaResult.valid) {
-      throw new UnauthorizedException('Invalid MFA code');
-    }
-
-    return this.tokens.issueTokens({
-      userId: dto.userId,
-      sessionId: dto.sessionId,
-      role: 'CUSTOMER',
-      ipAddress: dto.ipAddress,
-      userAgent: dto.userAgent,
-    });
-  }
-
 }

@@ -13,26 +13,21 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AccountIdentityService } from './services/account-identity.service';
 
-// Auth
 import { RegisterDto } from './dto/auth/register.dto';
 import { LoginDto } from './dto/auth/login.dto';
 import { RefreshTokenDto } from './dto/auth/refresh-token.dto';
 
-// Email
 import { VerifyEmailDto } from './dto/email/verify-email.dto';
 import { ResendVerificationDto } from './dto/email/resend-verification.dto';
 
-// Password
 import {
   ForgotPasswordDto,
   ResetPasswordDto,
   ChangePasswordDto,
 } from './dto/password';
 
-// Sessions
 import { RevokeSessionDto } from './dto/session/revoke-session.dto';
 
-// OAuth
 import { GoogleAuthDto } from './dto/oauth/google-auth.dto';
 import { FacebookAuthDto } from './dto/oauth/facebook-auth.dto';
 
@@ -159,8 +154,6 @@ export class AuthController {
     });
   }
 
-  /* ===================== MFA ===================== */
-
   @UseGuards(JwtAuthGuard)
   @Post('mfa/setup')
   setupMfa(@Req() req: any) {
@@ -169,20 +162,25 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('mfa/confirm')
-  confirmMfa(@Req() req: any, @Body() body: { code: string }) {
+  confirmMfa(@Req() req: any, @Body() dto: { code: string }) {
     return this.accountIdentity.confirmMfaTotp({
       userId: req.user.userId,
-      code: body.code,
+      code: dto.code,
     });
   }
 
   @Post('mfa/complete')
-  completeMfa(@Body() body: {
-    sessionId: string;
-    ipAddress: string;
-    userAgent: string;
-  }) {
-    return this.auth.completeMfa(body);
+  completeMfa(
+    @Body()
+    dto: {
+      userId: string;
+      sessionId: string;
+      mfaCode: string;
+      ipAddress: string;
+      userAgent: string;
+    },
+  ) {
+    return this.auth.completeMfa(dto);
   }
 
   private extractAccessToken(req: Request): string {

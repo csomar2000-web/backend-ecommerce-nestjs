@@ -12,7 +12,8 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
 const RESET_TOKEN_TTL_HOURS = 1;
-const PASSWORD_MIN_LENGTH = 6;
+const PASSWORD_MIN_LENGTH = 8;
+const BCRYPT_ROUNDS = 12;
 
 @Injectable()
 export class CredentialsPasswordsService {
@@ -46,12 +47,12 @@ export class CredentialsPasswordsService {
             throw new ForbiddenException('Email not verified');
         }
 
-        const valid = await bcrypt.compare(
+        const passwordValid = await bcrypt.compare(
             params.password,
             account.passwordHash,
         );
 
-        if (!valid) {
+        if (!passwordValid) {
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -61,7 +62,7 @@ export class CredentialsPasswordsService {
             userAgent: params.userAgent,
         });
 
-        const mfaEnabled = await this.prisma.mfaFactor.findFirst({
+        const mfaFactor = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: account.user.id,
                 revokedAt: null,
@@ -69,10 +70,11 @@ export class CredentialsPasswordsService {
             },
         });
 
-        if (mfaEnabled) {
+        if (mfaFactor) {
             return {
                 mfaRequired: true,
                 sessionId: session.id,
+                userId: account.user.id,
             };
         }
 
@@ -80,6 +82,40 @@ export class CredentialsPasswordsService {
             userId: account.user.id,
             sessionId: session.id,
         };
+    }
+
+    async verifyMfaCode(params: {
+        userId: string;
+        sessionId: string;
+        code: string;
+    }) {
+        const factor = await this.prisma.mfaFactor.findFirst({
+            where: {
+                userId: params.userId,
+                revokedAt: null,
+                verifiedAt: { not: null },
+            },
+        });
+
+        if (!factor) {
+            throw new UnauthorizedException('MFA not enabled');
+        }
+
+        const valid = await bcrypt.compare(
+            params.code,
+            factor.secretHash,
+        );
+
+        if (!valid) {
+            throw new UnauthorizedException('Invalid MFA code');
+        }
+
+        await this.prisma.mfaFactor.update({
+            where: { id: factor.id },
+            data: { lastUsedAt: new Date() },
+        });
+
+        return { success: true };
     }
 
     async requestPasswordReset(params: {
@@ -104,7 +140,7 @@ export class CredentialsPasswordsService {
                 userId: user.id,
                 token,
                 expiresAt: new Date(
-                    Date.now() + RESET_TOKEN_TTL_HOURS * 3600000,
+                    Date.now() + RESET_TOKEN_TTL_HOURS * 60 * 60 * 1000,
                 ),
             },
         });
@@ -139,7 +175,10 @@ export class CredentialsPasswordsService {
             throw new BadRequestException('Invalid or expired token');
         }
 
-        const passwordHash = await bcrypt.hash(params.newPassword, 12);
+        const passwordHash = await bcrypt.hash(
+            params.newPassword,
+            BCRYPT_ROUNDS,
+        );
 
         await this.prisma.$transaction([
             this.prisma.authAccount.updateMany({
@@ -193,7 +232,10 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('Invalid password');
         }
 
-        const newHash = await bcrypt.hash(params.newPassword, 12);
+        const newHash = await bcrypt.hash(
+            params.newPassword,
+            BCRYPT_ROUNDS,
+        );
 
         await this.prisma.$transaction([
             this.prisma.authAccount.update({
@@ -208,59 +250,4 @@ export class CredentialsPasswordsService {
 
         return { success: true };
     }
-
-    private verifyTotpCode(secret: string, code: string): boolean {
-        const timeStep = 30;
-        const window = 1;
-        const now = Math.floor(Date.now() / 1000 / timeStep);
-
-        for (let i = -window; i <= window; i++) {
-            const expected = crypto
-                .createHmac('sha1', Buffer.from(secret, 'hex'))
-                .update(Buffer.from((now + i).toString()))
-                .digest('hex')
-                .slice(-6);
-
-            if (expected === code) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    async verifyMfaCode(params: {
-        userId: string;
-        sessionId: string;
-        code: string;
-    }) {
-        const factor = await this.prisma.mfaFactor.findFirst({
-            where: {
-                userId: params.userId,
-                revokedAt: null,
-                verifiedAt: { not: null },
-            },
-        });
-
-        if (!factor) {
-            throw new UnauthorizedException('MFA not enabled');
-        }
-
-        const valid = await bcrypt.compare(
-            params.code,
-            factor.secretHash,
-        );
-
-        if (!valid) {
-            throw new UnauthorizedException('Invalid MFA code');
-        }
-
-        await this.prisma.mfaFactor.update({
-            where: { id: factor.id },
-            data: { lastUsedAt: new Date() },
-        });
-
-        return { success: true };
-    }
-
 }
