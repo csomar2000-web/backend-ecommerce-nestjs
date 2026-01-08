@@ -32,7 +32,7 @@ export class AuthService {
     private readonly audit: AuditObservabilityService,
     private readonly googleAuth: GoogleAuthService,
     private readonly facebookAuth: FacebookAuthService,
-  ) {}
+  ) { }
 
   register(request: RegisterRequest) {
     return this.accountIdentity.register({
@@ -50,22 +50,24 @@ export class AuthService {
   }
 
   resendVerification(email: string) {
-    this.security.assertSensitiveActionAllowed({
-      identifier: email,
-      type: 'EMAIL_VERIFICATION',
-    });
-
     return this.accountIdentity.resendVerification(email);
   }
 
   async login(request: LoginRequest) {
+    const email = request.email.toLowerCase().trim();
+
     await this.security.assertLoginAllowed({
-      identifier: request.email,
+      email,
+      ipAddress: request.ipAddress,
     });
 
     try {
       const result = await this.credentials.login(request);
-      await this.security.clearLoginFailures(request.email);
+
+      await this.security.clearLoginFailures(
+        email,
+        request.ipAddress,
+      );
 
       if ('mfaRequired' in result) {
         return result;
@@ -79,7 +81,7 @@ export class AuthService {
       });
     } catch (error) {
       await this.security.recordFailedLogin({
-        identifier: request.email,
+        email,
         ipAddress: request.ipAddress,
         userAgent: request.userAgent,
       });
@@ -149,7 +151,11 @@ export class AuthService {
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({ identifier: 'google' });
+    await this.security.assertLoginAllowed({
+      email: 'google',
+      ipAddress: request.ipAddress,
+    });
+
     const profile = await this.googleAuth.verifyIdToken(request.idToken);
     return this.handleSocialLogin(AuthProvider.GOOGLE, profile, request);
   }
@@ -159,7 +165,11 @@ export class AuthService {
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({ identifier: 'facebook' });
+    await this.security.assertLoginAllowed({
+      email: 'facebook',
+      ipAddress: request.ipAddress,
+    });
+
     const profile = await this.facebookAuth.verifyAccessToken(
       request.accessToken,
     );

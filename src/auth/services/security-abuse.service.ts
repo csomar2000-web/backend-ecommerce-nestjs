@@ -18,78 +18,89 @@ function bucket(date: Date, minutes: number) {
   return new Date(Math.floor(date.getTime() / ms) * ms);
 }
 
+function loginIdentifiers(email: string, ip: string) {
+  return [`login:email:${email}`, `login:ip:${ip}`, `login:email_ip:${email}:${ip}`];
+}
+
 @Injectable()
 export class SecurityAbuseService {
   constructor(private readonly prisma: PrismaService) { }
 
-  async assertLoginAllowed(params: { identifier: string }) {
+  async assertLoginAllowed(params: { email: string; ipAddress: string }) {
     const now = new Date();
-
-    const activeBlock = await this.prisma.rateLimit.findFirst({
-      where: {
-        identifier: params.identifier,
-        action: 'LOGIN_BLOCK',
-        expiresAt: { gt: now },
-      },
-    });
-
-    if (activeBlock) {
-      throw new ForbiddenException('Temporarily blocked');
-    }
-
     const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
+    const ids = loginIdentifiers(params.email, params.ipAddress);
 
-    const record = await this.prisma.rateLimit.findUnique({
-      where: {
-        identifier_action_windowStart: {
-          identifier: params.identifier,
-          action: 'LOGIN',
-          windowStart,
+    for (const identifier of ids) {
+      const activeBlock = await this.prisma.rateLimit.findFirst({
+        where: {
+          identifier,
+          action: 'LOGIN_BLOCK',
+          expiresAt: { gt: now },
         },
-      },
-    });
+      });
 
-    if ((record?.count ?? 0) >= LOGIN_LIMIT) {
-      await this.blockIdentifier(params.identifier);
-      throw new ForbiddenException('Temporarily blocked');
+      if (activeBlock) {
+        throw new ForbiddenException('Temporarily blocked');
+      }
+
+      const record = await this.prisma.rateLimit.findUnique({
+        where: {
+          identifier_action_windowStart: {
+            identifier,
+            action: 'LOGIN',
+            windowStart,
+          },
+        },
+      });
+
+      if ((record?.count ?? 0) >= LOGIN_LIMIT) {
+        await this.blockIdentifier(identifier);
+        throw new ForbiddenException('Temporarily blocked');
+      }
     }
   }
 
   async recordFailedLogin(params: {
-    identifier: string;
+    email: string;
     ipAddress: string;
     userAgent: string;
   }) {
     const now = new Date();
     const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
+    const ids = loginIdentifiers(params.email, params.ipAddress);
 
-    await this.prisma.rateLimit.upsert({
-      where: {
-        identifier_action_windowStart: {
-          identifier: params.identifier,
+    for (const identifier of ids) {
+      await this.prisma.rateLimit.upsert({
+        where: {
+          identifier_action_windowStart: {
+            identifier,
+            action: 'LOGIN',
+            windowStart,
+          },
+        },
+        create: {
+          identifier,
           action: 'LOGIN',
           windowStart,
+          expiresAt: new Date(
+            windowStart.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
+          ),
+          count: 1,
         },
-      },
-      create: {
-        identifier: params.identifier,
-        action: 'LOGIN',
-        windowStart,
-        expiresAt: new Date(
-          windowStart.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
-        ),
-        count: 1,
-      },
-      update: {
-        count: { increment: 1 },
-      },
-    });
+        update: {
+          count: { increment: 1 },
+        },
+      });
+    }
   }
 
-  async clearLoginFailures(identifier: string) {
+  async clearLoginFailures(email: string, ipAddress: string) {
+    const ids = loginIdentifiers(email, ipAddress);
+
     await this.prisma.rateLimit.deleteMany({
       where: {
-        identifier,
+        identifier: { in: ids },
         action: 'LOGIN',
       },
     });
