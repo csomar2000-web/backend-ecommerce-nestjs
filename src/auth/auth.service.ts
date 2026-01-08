@@ -1,4 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { AuthProvider } from '@prisma/client';
+
 import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
 import { SessionsDevicesService } from './services/sessions-devices.service';
@@ -8,7 +10,16 @@ import { SecurityAbuseService } from './services/security-abuse.service';
 import { AuditObservabilityService } from './services/audit-observability.service';
 import { GoogleAuthService } from './services/google-auth.service';
 import { FacebookAuthService } from './services/facebook-auth.service';
-import { AuthProvider } from '@prisma/client';
+
+import {
+  RegisterRequest,
+  LoginRequest,
+  RefreshRequest,
+  PasswordResetRequest,
+  ConfirmPasswordResetRequest,
+  ChangePasswordRequest,
+} from './types/auth-requests.type';
+
 import { SocialProfile } from './types/social-profile.type';
 
 @Injectable()
@@ -25,8 +36,10 @@ export class AuthService {
     private readonly facebookAuth: FacebookAuthService,
   ) { }
 
-  register(dto: any) {
-    return this.accountIdentity.register(dto);
+  /* ----------------------------- Registration ----------------------------- */
+
+  register(request: RegisterRequest) {
+    return this.accountIdentity.register(request);
   }
 
   verifyEmail(token: string) {
@@ -42,19 +55,16 @@ export class AuthService {
     return this.accountIdentity.resendVerification(email);
   }
 
-  async login(dto: {
-    email: string;
-    password: string;
-    ipAddress: string;
-    userAgent: string;
-  }) {
+  /* -------------------------------- Login -------------------------------- */
+
+  async login(request: LoginRequest) {
     await this.security.assertLoginAllowed({
-      identifier: dto.email,
+      identifier: request.email,
     });
 
     try {
-      const result = await this.credentials.login(dto);
-      await this.security.clearLoginFailures(dto.email);
+      const result = await this.credentials.login(request);
+      await this.security.clearLoginFailures(request.email);
 
       if ('mfaRequired' in result) {
         return result;
@@ -64,20 +74,20 @@ export class AuthService {
         userId: result.userId,
         sessionId: result.sessionId,
         role: 'CUSTOMER',
-        ipAddress: dto.ipAddress,
-        userAgent: dto.userAgent,
+        ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
       });
     } catch (error) {
       await this.security.recordFailedLogin({
-        identifier: dto.email,
-        ipAddress: dto.ipAddress,
-        userAgent: dto.userAgent,
+        identifier: request.email,
+        ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
       });
       throw error;
     }
   }
 
-  async completeMfa(dto: {
+  async completeMfa(request: {
     userId: string;
     sessionId: string;
     mfaCode: string;
@@ -85,88 +95,86 @@ export class AuthService {
     userAgent: string;
   }) {
     await this.credentials.verifyMfaCode({
-      userId: dto.userId,
-      sessionId: dto.sessionId,
-      code: dto.mfaCode,
+      userId: request.userId,
+      sessionId: request.sessionId,
+      code: request.mfaCode,
     });
 
     return this.tokens.issueTokens({
-      userId: dto.userId,
-      sessionId: dto.sessionId,
+      userId: request.userId,
+      sessionId: request.sessionId,
       role: 'CUSTOMER',
-      ipAddress: dto.ipAddress,
-      userAgent: dto.userAgent,
+      ipAddress: request.ipAddress,
+      userAgent: request.userAgent,
     });
   }
 
-  refresh(dto: any) {
-    return this.tokens.refreshTokens(dto);
+  /* ------------------------------- Tokens -------------------------------- */
+
+  refresh(request: RefreshRequest) {
+    return this.tokens.refreshTokens(request);
   }
 
-  logout(dto: { userId: string; sessionId: string; accessToken: string }) {
-    return this.sessions.logoutCurrentSession(dto);
+  /* ------------------------------- Logout -------------------------------- */
+
+  logout(request: { userId: string; sessionId: string; accessToken: string }) {
+    return this.sessions.logoutCurrentSession(request);
   }
 
-  logoutAll(dto: { userId: string; accessToken: string }) {
-    return this.sessions.logoutAllSessions(dto);
+  logoutAll(request: { userId: string; accessToken: string }) {
+    return this.sessions.logoutAllSessions(request);
   }
 
-  requestPasswordReset(dto: any) {
-    return this.credentials.requestPasswordReset(dto);
-  }
-  confirmPasswordReset(dto: {
-    token: string;
-    newPassword: string;
-    ipAddress: string;
-    userAgent: string;
-  }) {
-    return this.credentials.confirmPasswordReset(dto);
+  /* -------------------------- Password Reset ------------------------------ */
+
+  requestPasswordReset(request: PasswordResetRequest) {
+    return this.credentials.requestPasswordReset(request);
   }
 
-
-  changePassword(dto: any) {
-    return this.credentials.changePassword(dto);
+  confirmPasswordReset(request: ConfirmPasswordResetRequest) {
+    return this.credentials.confirmPasswordReset(request);
   }
+
+  changePassword(request: ChangePasswordRequest) {
+    return this.credentials.changePassword(request);
+  }
+
+  /* ------------------------------ Sessions -------------------------------- */
 
   listSessions(userId: string) {
     return this.sessions.listSessions(userId);
   }
 
-  revokeSession(dto: {
+  revokeSession(request: {
     userId: string;
     sessionId: string;
     accessToken: string;
   }) {
-    return this.sessions.revokeSession(dto);
+    return this.sessions.revokeSession(request);
   }
 
-  async loginWithGoogle(dto: {
+  /* ------------------------------ OAuth ---------------------------------- */
+
+  async loginWithGoogle(request: {
     idToken: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({
-      identifier: 'google',
-    });
-
-    const profile = await this.googleAuth.verifyIdToken(dto.idToken);
-
-    return this.handleSocialLogin(AuthProvider.GOOGLE, profile, dto);
+    await this.security.assertLoginAllowed({ identifier: 'google' });
+    const profile = await this.googleAuth.verifyIdToken(request.idToken);
+    return this.handleSocialLogin(AuthProvider.GOOGLE, profile, request);
   }
 
-  async loginWithFacebook(dto: {
+  async loginWithFacebook(request: {
     accessToken: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({
-      identifier: 'facebook',
-    });
-
-    const profile =
-      await this.facebookAuth.verifyAccessToken(dto.accessToken);
-
-    return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, dto);
+    await this.security.assertLoginAllowed({ identifier: 'facebook' });
+    const profile = await this.facebookAuth.verifyAccessToken(
+      request.accessToken,
+    );
+    return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, request);
   }
 
   private async handleSocialLogin(
