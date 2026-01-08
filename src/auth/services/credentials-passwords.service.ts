@@ -93,7 +93,9 @@ export class CredentialsPasswordsService {
             where: { email },
         });
 
-        if (!user) return { success: true };
+        if (!user) {
+            return { success: true };
+        }
 
         const token = crypto.randomBytes(48).toString('hex');
 
@@ -206,4 +208,59 @@ export class CredentialsPasswordsService {
 
         return { success: true };
     }
+
+    private verifyTotpCode(secret: string, code: string): boolean {
+        const timeStep = 30;
+        const window = 1;
+        const now = Math.floor(Date.now() / 1000 / timeStep);
+
+        for (let i = -window; i <= window; i++) {
+            const expected = crypto
+                .createHmac('sha1', Buffer.from(secret, 'hex'))
+                .update(Buffer.from((now + i).toString()))
+                .digest('hex')
+                .slice(-6);
+
+            if (expected === code) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    async verifyMfaCode(params: {
+        userId: string;
+        sessionId: string;
+        code: string;
+    }) {
+        const factor = await this.prisma.mfaFactor.findFirst({
+            where: {
+                userId: params.userId,
+                revokedAt: null,
+                verifiedAt: { not: null },
+            },
+        });
+
+        if (!factor) {
+            throw new UnauthorizedException('MFA not enabled');
+        }
+
+        const valid = await bcrypt.compare(
+            params.code,
+            factor.secretHash,
+        );
+
+        if (!valid) {
+            throw new UnauthorizedException('Invalid MFA code');
+        }
+
+        await this.prisma.mfaFactor.update({
+            where: { id: factor.id },
+            data: { lastUsedAt: new Date() },
+        });
+
+        return { success: true };
+    }
+
 }

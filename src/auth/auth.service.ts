@@ -185,4 +185,26 @@ export class AuthService {
       userAgent: context.userAgent,
     });
   }
+  async completeMfa(dto: {
+    userId: string;
+    mfaCode: string;
+    sessionId: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
+    const mfaResult = await this.credentials.verifyMfaCode(dto);
+
+    if (!mfaResult.valid) {
+      throw new UnauthorizedException('Invalid MFA code');
+    }
+
+    return this.tokens.issueTokens({
+      userId: dto.userId,
+      sessionId: dto.sessionId,
+      role: 'CUSTOMER',
+      ipAddress: dto.ipAddress,
+      userAgent: dto.userAgent,
+    });
+  }
+
 }
