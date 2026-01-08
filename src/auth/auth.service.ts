@@ -1,4 +1,3 @@
-// auth.service.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { AuthProvider } from '@prisma/client';
 
@@ -6,7 +5,6 @@ import { AccountIdentityService } from './services/account-identity.service';
 import { CredentialsPasswordsService } from './services/credentials-passwords.service';
 import { SessionsDevicesService } from './services/sessions-devices.service';
 import { TokensOrchestrationService } from './services/tokens-orchestration.service';
-import { AuthorizationService } from './services/authorization.service';
 import { SecurityAbuseService } from './services/security-abuse.service';
 import { AuditObservabilityService } from './services/audit-observability.service';
 import { GoogleAuthService } from './services/google-auth.service';
@@ -30,14 +28,11 @@ export class AuthService {
     private readonly credentials: CredentialsPasswordsService,
     private readonly sessions: SessionsDevicesService,
     private readonly tokens: TokensOrchestrationService,
-    private readonly authorization: AuthorizationService,
     private readonly security: SecurityAbuseService,
     private readonly audit: AuditObservabilityService,
     private readonly googleAuth: GoogleAuthService,
     private readonly facebookAuth: FacebookAuthService,
-  ) { }
-
-  /* ----------------------------- Registration ----------------------------- */
+  ) {}
 
   register(request: RegisterRequest) {
     return this.accountIdentity.register({
@@ -63,8 +58,6 @@ export class AuthService {
     return this.accountIdentity.resendVerification(email);
   }
 
-  /* -------------------------------- Login -------------------------------- */
-
   async login(request: LoginRequest) {
     await this.security.assertLoginAllowed({
       identifier: request.email,
@@ -81,7 +74,6 @@ export class AuthService {
       return this.tokens.issueTokens({
         userId: result.userId,
         sessionId: result.sessionId,
-        role: 'CUSTOMER',
         ipAddress: request.ipAddress,
         userAgent: request.userAgent,
       });
@@ -111,19 +103,14 @@ export class AuthService {
     return this.tokens.issueTokens({
       userId: request.userId,
       sessionId: request.sessionId,
-      role: 'CUSTOMER',
       ipAddress: request.ipAddress,
       userAgent: request.userAgent,
     });
   }
 
-  /* ------------------------------- Tokens -------------------------------- */
-
   refresh(request: RefreshRequest) {
     return this.tokens.refreshTokens(request);
   }
-
-  /* ------------------------------- Logout -------------------------------- */
 
   logout(request: { userId: string; sessionId: string; accessToken: string }) {
     return this.sessions.logoutCurrentSession(request);
@@ -132,8 +119,6 @@ export class AuthService {
   logoutAll(request: { userId: string; accessToken: string }) {
     return this.sessions.logoutAllSessions(request);
   }
-
-  /* -------------------------- Password Reset ------------------------------ */
 
   requestPasswordReset(request: PasswordResetRequest) {
     return this.credentials.requestPasswordReset(request);
@@ -147,8 +132,6 @@ export class AuthService {
     return this.credentials.changePassword(request);
   }
 
-  /* ------------------------------ Sessions -------------------------------- */
-
   listSessions(userId: string) {
     return this.sessions.listSessions(userId);
   }
@@ -160,8 +143,6 @@ export class AuthService {
   }) {
     return this.sessions.revokeSession(request);
   }
-
-  /* ------------------------------ OAuth ---------------------------------- */
 
   async loginWithGoogle(request: {
     idToken: string;
@@ -222,7 +203,6 @@ export class AuthService {
     return this.tokens.issueTokens({
       userId: user.id,
       sessionId: session.id,
-      role: 'CUSTOMER',
       ipAddress: context.ipAddress,
       userAgent: context.userAgent,
     });

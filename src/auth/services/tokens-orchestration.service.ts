@@ -1,10 +1,10 @@
 import {
   Injectable,
   UnauthorizedException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token/token.service';
+import { AuthorizationService } from './authorization.service';
 import { MfaType, MfaChallengeReason } from '@prisma/client';
 
 @Injectable()
@@ -12,18 +12,22 @@ export class TokensOrchestrationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokenService: TokenService,
+    private readonly authorization: AuthorizationService,
   ) { }
 
   async issueTokens(params: {
     userId: string;
-    role: string;
     sessionId: string;
     ipAddress: string;
     userAgent: string;
   }) {
+    const role = await this.authorization.getActiveRole({
+      userId: params.userId,
+    });
+
     const accessToken = this.tokenService.generateAccessToken(
       params.userId,
-      params.role,
+      role.name,
       params.sessionId,
     );
 
@@ -100,22 +104,13 @@ export class TokensOrchestrationService {
       };
     }
 
-    const roleAssignment =
-      await this.prisma.userRoleAssignment.findFirst({
-        where: {
-          userId: rotation.userId,
-          revokedAt: null,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: now } },
-          ],
-        },
-        include: { role: true },
-      });
+    const role = await this.authorization.getActiveRole({
+      userId: rotation.userId,
+    });
 
     const accessToken = this.tokenService.generateAccessToken(
       rotation.userId,
-      roleAssignment?.role.name ?? 'CUSTOMER',
+      role.name,
       rotation.sessionId,
     );
 
@@ -232,5 +227,4 @@ export class TokensOrchestrationService {
 
     return { success: true };
   }
-
 }
