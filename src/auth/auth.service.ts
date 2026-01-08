@@ -1,3 +1,4 @@
+// auth.service.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { AuthProvider } from '@prisma/client';
 
@@ -39,7 +40,14 @@ export class AuthService {
   /* ----------------------------- Registration ----------------------------- */
 
   register(request: RegisterRequest) {
-    return this.accountIdentity.register(request);
+    return this.accountIdentity.register({
+      email: request.email,
+      password: request.password,
+      confirmPassword: request.password,
+      phone: request.phoneNumber,
+      ipAddress: request.ipAddress,
+      userAgent: request.userAgent,
+    });
   }
 
   verifyEmail(token: string) {

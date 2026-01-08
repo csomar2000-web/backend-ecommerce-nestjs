@@ -10,7 +10,8 @@ const SENSITIVE_WINDOW_MINUTES = 60;
 
 type SensitiveActionType =
   | 'PASSWORD_RESET'
-  | 'EMAIL_VERIFICATION';
+  | 'EMAIL_VERIFICATION'
+  | 'MFA_SETUP';
 
 @Injectable()
 export class SecurityAbuseService {

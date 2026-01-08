@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionsDevicesService } from './sessions-devices.service';
 import { MailService } from '../../mail/mail.service';
+import { SecurityAbuseService } from './security-abuse.service';
 import { AuthProvider, MfaType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -30,6 +31,7 @@ export class CredentialsPasswordsService {
         private readonly prisma: PrismaService,
         private readonly sessions: SessionsDevicesService,
         private readonly mail: MailService,
+        private readonly abuse: SecurityAbuseService,
     ) { }
 
     async login(params: {
@@ -40,6 +42,10 @@ export class CredentialsPasswordsService {
     }) {
         const email = params.email.toLowerCase().trim();
 
+        await this.abuse.assertLoginAllowed({
+            identifier: `${email}:${params.ipAddress}`,
+        });
+
         const account = await this.prisma.authAccount.findFirst({
             where: {
                 provider: AuthProvider.LOCAL,
@@ -49,6 +55,11 @@ export class CredentialsPasswordsService {
         });
 
         if (!account || !account.passwordHash) {
+            await this.abuse.recordFailedLogin({
+                identifier: `${email}:${params.ipAddress}`,
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+            });
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -62,8 +73,17 @@ export class CredentialsPasswordsService {
         );
 
         if (!passwordValid) {
+            await this.abuse.recordFailedLogin({
+                identifier: `${email}:${params.ipAddress}`,
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+            });
             throw new UnauthorizedException('Invalid credentials');
         }
+
+        await this.abuse.clearLoginFailures(
+            `${email}:${params.ipAddress}`,
+        );
 
         const session = await this.sessions.createSession({
             userId: account.user.id,
@@ -137,6 +157,12 @@ export class CredentialsPasswordsService {
         userAgent: string;
     }) {
         const email = params.email.toLowerCase().trim();
+        const identifier = `${email}:${params.ipAddress}`;
+
+        await this.abuse.assertSensitiveActionAllowed({
+            identifier,
+            type: 'PASSWORD_RESET',
+        });
 
         const user = await this.prisma.user.findUnique({
             where: { email },
