@@ -233,15 +233,4 @@ export class TokensOrchestrationService {
     return { success: true };
   }
 
-  async detectBlacklistedAccessToken(token: string) {
-    const record = await this.prisma.tokenBlacklist.findUnique({
-      where: { token },
-    });
-
-    if (record && record.expiresAt > new Date()) {
-      throw new ForbiddenException('Token revoked');
-    }
-
-    return true;
-  }
 }
