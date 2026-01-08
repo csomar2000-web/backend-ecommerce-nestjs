@@ -31,7 +31,7 @@ import { RevokeSessionDto } from './dto/session/revoke-session.dto';
 import { GoogleAuthDto } from './dto/oauth/google-auth.dto';
 import { FacebookAuthDto } from './dto/oauth/facebook-auth.dto';
 
-@Controller('api/auth')
+@Controller('auth')
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
