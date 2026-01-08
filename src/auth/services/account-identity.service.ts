@@ -18,10 +18,6 @@ export class AccountIdentityService {
     private readonly mailService: MailService,
   ) { }
 
-  /* ------------------------------------------------------------------
-   * REGISTRATION
-   * ------------------------------------------------------------------ */
-
   async register(params: {
     email: string;
     password: string;
@@ -31,7 +27,6 @@ export class AccountIdentityService {
     userAgent: string;
   }) {
     const { email, password, confirmPassword, phone } = params;
-
     const normalizedEmail = email.toLowerCase().trim();
 
     if (password !== confirmPassword) {
@@ -64,11 +59,7 @@ export class AccountIdentityService {
             verifiedAt: null,
           },
         },
-        customerProfile: phone
-          ? {
-            create: { phone },
-          }
-          : undefined,
+        customerProfile: phone ? { create: { phone } } : undefined,
       },
     });
 
@@ -91,20 +82,12 @@ export class AccountIdentityService {
     return { success: true };
   }
 
-  /* ------------------------------------------------------------------
-   * EMAIL VERIFICATION
-   * ------------------------------------------------------------------ */
-
   async verifyEmail(token: string) {
     const record = await this.prisma.emailVerification.findUnique({
       where: { token },
     });
 
-    if (
-      !record ||
-      record.expiresAt < new Date() ||
-      record.verifiedAt !== null
-    ) {
+    if (!record || record.expiresAt < new Date() || record.verifiedAt !== null) {
       throw new UnauthorizedException('Invalid verification token');
     }
 
@@ -166,10 +149,6 @@ export class AccountIdentityService {
     return { success: true };
   }
 
-  /* ------------------------------------------------------------------
-   * SOCIAL AUTH (UPSERT)
-   * ------------------------------------------------------------------ */
-
   async upsertSocialAccount(params: {
     provider: AuthProvider;
     providerId: string;
@@ -185,9 +164,7 @@ export class AccountIdentityService {
 
       if (!user) {
         user = await tx.user.create({
-          data: {
-            email: normalizedEmail,
-          },
+          data: { email: normalizedEmail },
         });
       }
 
@@ -214,10 +191,6 @@ export class AccountIdentityService {
       return { user, authAccount };
     });
   }
-
-  /* ------------------------------------------------------------------
-   * MFA SETUP (TOTP)
-   * ------------------------------------------------------------------ */
 
   async setupMfaTotp(userId: string) {
     const secret = speakeasy.generateSecret({ length: 20 });
@@ -246,10 +219,7 @@ export class AccountIdentityService {
     };
   }
 
-  async confirmMfaTotp(params: {
-    userId: string;
-    code: string;
-  }) {
+  async confirmMfaTotp(params: { userId: string; code: string }) {
     const factor = await this.prisma.mfaFactor.findFirst({
       where: {
         userId: params.userId,

@@ -7,9 +7,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SessionsDevicesService } from './sessions-devices.service';
 import { MailService } from '../../mail/mail.service';
-import { AuthProvider } from '@prisma/client';
+import { AuthProvider, MfaType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import * as speakeasy from 'speakeasy';
 
 const RESET_TOKEN_TTL_HOURS = 1;
 const PASSWORD_MIN_LENGTH = 8;
@@ -65,6 +66,7 @@ export class CredentialsPasswordsService {
         const mfaFactor = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: account.user.id,
+                type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
             },
@@ -92,6 +94,7 @@ export class CredentialsPasswordsService {
         const factor = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: params.userId,
+                type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
             },
@@ -101,10 +104,12 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('MFA not enabled');
         }
 
-        const valid = await bcrypt.compare(
-            params.code,
-            factor.secretHash,
-        );
+        const valid = speakeasy.totp.verify({
+            secret: factor.secretHash,
+            encoding: 'base32',
+            token: params.code,
+            window: 1,
+        });
 
         if (!valid) {
             throw new UnauthorizedException('Invalid MFA code');
