@@ -3,20 +3,22 @@ import {
     NotFoundException,
     BadRequestException,
 } from '@nestjs/common'
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service'
 import {
     CreateContactMessageDto,
     ListContactMessagesDto,
     UpdateMessageStatusDto,
     ReplyToContactMessageDto,
-} from './dto/index';
-import { MessageStatus } from '@prisma/client'
+} from './dto'
+import {
+    MessageStatus,
+    ReplyChannel,
+    Prisma,
+} from '@prisma/client'
 
 @Injectable()
 export class MessagesService {
     constructor(private readonly prisma: PrismaService) { }
-
-
     async create(dto: CreateContactMessageDto) {
         return this.prisma.contactMessage.create({
             data: {
@@ -30,27 +32,76 @@ export class MessagesService {
     }
 
     async findAll(filters: ListContactMessagesDto) {
-        const { status, search } = filters
+        const {
+            status,
+            search,
+            page = 1,
+            limit = 20,
+        } = filters
 
-        return this.prisma.contactMessage.findMany({
-            where: {
-                status: status ?? undefined,
-                OR: search
-                    ? [
-                        { email: { contains: search, mode: 'insensitive' } },
-                        { name: { contains: search, mode: 'insensitive' } },
-                        { subject: { contains: search, mode: 'insensitive' } },
-                        { message: { contains: search, mode: 'insensitive' } },
-                    ]
-                    : undefined,
-            },
-            orderBy: { createdAt: 'desc' },
-            include: {
-                lastRepliedBy: {
-                    select: { id: true, email: true, displayName: true },
+        const skip = (page - 1) * limit
+        const take = limit
+
+        const where: Prisma.ContactMessageWhereInput = {
+            status: status ?? undefined,
+            OR: search
+                ? [
+                    {
+                        email: {
+                            contains: search,
+                            mode: Prisma.QueryMode.insensitive,
+                        },
+                    },
+                    {
+                        name: {
+                            contains: search,
+                            mode: Prisma.QueryMode.insensitive,
+                        },
+                    },
+                    {
+                        subject: {
+                            contains: search,
+                            mode: Prisma.QueryMode.insensitive,
+                        },
+                    },
+                    {
+                        message: {
+                            contains: search,
+                            mode: Prisma.QueryMode.insensitive,
+                        },
+                    },
+                ]
+                : undefined,
+        }
+
+        const [items, total] = await this.prisma.$transaction([
+            this.prisma.contactMessage.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take,
+                include: {
+                    lastRepliedBy: {
+                        select: {
+                            id: true,
+                            email: true,
+                            displayName: true,
+                        },
+                    },
                 },
+            }),
+            this.prisma.contactMessage.count({ where }),
+        ])
+
+        return {
+            items,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
             },
-        })
+        }
     }
 
     async findOne(id: string) {
@@ -61,7 +112,11 @@ export class MessagesService {
                     orderBy: { createdAt: 'asc' },
                     include: {
                         author: {
-                            select: { id: true, email: true, displayName: true },
+                            select: {
+                                id: true,
+                                email: true,
+                                displayName: true,
+                            },
                         },
                     },
                 },
@@ -78,7 +133,7 @@ export class MessagesService {
     async updateStatus(id: string, dto: UpdateMessageStatusDto) {
         if (dto.status === MessageStatus.REPLIED) {
             throw new BadRequestException(
-                'REPLIED status is only set via reply endpoint',
+                'REPLIED status can only be set via reply endpoint',
             )
         }
 
@@ -143,7 +198,7 @@ export class MessagesService {
                     contactMessageId: messageId,
                     authorId: adminUserId,
                     content: dto.content,
-                    sentVia: 'EMAIL',
+                    sentVia: dto.channel ?? ReplyChannel.EMAIL,
                 },
             })
 
