@@ -10,8 +10,11 @@ import {
 import type { Request } from 'express';
 
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AccountIdentityService } from './services/account-identity.service';
+
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 import { RegisterDto } from './dto/auth/register.dto';
 import { LoginDto } from './dto/auth/login.dto';
@@ -106,10 +109,7 @@ export class AuthController {
   /* -------------------------- Password Reset ------------------------------- */
 
   @Post('password-reset')
-  requestPasswordReset(
-    @Body() dto: ForgotPasswordDto,
-    @Req() req: Request,
-  ) {
+  requestPasswordReset(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     return this.auth.requestPasswordReset({
       email: dto.email,
       ipAddress: req.ip ?? 'unknown',
@@ -118,10 +118,7 @@ export class AuthController {
   }
 
   @Post('password-reset/confirm')
-  confirmPasswordReset(
-    @Body() dto: ResetPasswordDto,
-    @Req() req: Request,
-  ) {
+  confirmPasswordReset(@Body() dto: ResetPasswordDto, @Req() req: Request) {
     return this.auth.confirmPasswordReset({
       token: dto.token,
       newPassword: dto.newPassword,
@@ -148,13 +145,14 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
-  listSessions(@Req() req: any) {
+  listOwnSessions(@Req() req: any) {
     return this.auth.listSessions(req.user.userId);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Post('sessions/revoke')
-  revokeSession(@Req() req: any, @Body() dto: RevokeSessionDto) {
+  revokeAnySession(@Req() req: any, @Body() dto: RevokeSessionDto) {
     return this.auth.revokeSession({
       userId: req.user.userId,
       sessionId: dto.sessionId,
