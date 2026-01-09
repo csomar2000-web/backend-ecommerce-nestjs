@@ -568,12 +568,60 @@ model ContactMessage {
 
   status    MessageStatus @default(NEW)
 
+  repliedAt        DateTime?
+  lastRepliedById  String?
+  lastRepliedBy    User? @relation(fields: [lastRepliedById], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   readAt    DateTime?
 
+  replies   ContactMessageReply[]
+
   @@index([email])
   @@index([status])
+  @@index([repliedAt])
+  @@map("contact_messages")
+}
+model ContactMessageReply {
+  id               String   @id @default(cuid())
+  contactMessageId String
+  authorId         String
+
+  content          String
+
+  sentVia          ReplyChannel @default(EMAIL)
+  sentAt           DateTime     @default(now())
+  deliveryStatus   DeliveryStatus @default(SENT)
+
+  createdAt DateTime @default(now())
+
+  contactMessage ContactMessage @relation(
+    fields: [contactMessageId],
+    references: [id],
+    onDelete: Cascade
+  )
+
+  author User @relation(
+    fields: [authorId],
+    references: [id],
+    onDelete: Restrict
+  )
+
+  @@index([contactMessageId])
+  @@index([authorId])
+  @@index([sentAt])
+  @@map("contact_message_replies")
+}
+enum ReplyChannel {
+  EMAIL
+  DASHBOARD
+}
+
+enum DeliveryStatus {
+  SENT
+  FAILED
+  QUEUED
 }
 
 enum MessageStatus {
