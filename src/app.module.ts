@@ -7,6 +7,7 @@ import * as Joi from 'joi';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
+import { MessagesModule } from './message/messages.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -35,6 +36,7 @@ import { RolesGuard } from './auth/guards/roles.guard';
     PrismaModule,
     AuthModule,
     NewsletterModule,
+    MessagesModule,
   ],
 
   providers: [
