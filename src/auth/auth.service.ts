@@ -192,6 +192,14 @@ export class AuthService {
     context: { ipAddress: string; userAgent: string },
   ) {
     if (!profile.email || !profile.emailVerified) {
+      await this.security.recordFailedSocialLogin(
+        this.security.buildSocialIdentifiers({
+          provider,
+          providerUserId: profile.providerId,
+          email: profile.email,
+          ipAddress: context.ipAddress,
+        }),
+      );
       throw new UnauthorizedException();
     }
 
@@ -204,37 +212,43 @@ export class AuthService {
 
     await this.security.assertSocialLoginAllowed(identifiers);
 
-    const { user, authAccount } =
-      await this.accountIdentity.upsertSocialAccount({
-        provider,
-        providerId: profile.providerId,
-        email: profile.email,
-        emailVerified: profile.emailVerified,
+    try {
+      const { user, authAccount } =
+        await this.accountIdentity.upsertSocialAccount({
+          provider,
+          providerId: profile.providerId,
+          email: profile.email,
+          emailVerified: profile.emailVerified,
+        });
+
+      const session = await this.sessions.createSession({
+        userId: user.id,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
       });
 
-    const session = await this.sessions.createSession({
-      userId: user.id,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-    });
+      await this.audit.audit({
+        userId: user.id,
+        action: 'SOCIAL_LOGIN',
+        success: true,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        resource: 'AUTH_ACCOUNT',
+        resourceId: authAccount.id,
+        metadata: { provider },
+      });
 
-    await this.audit.audit({
-      userId: user.id,
-      action: 'SOCIAL_LOGIN',
-      success: true,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-      resource: 'AUTH_ACCOUNT',
-      resourceId: authAccount.id,
-      metadata: { provider },
-    });
-
-    return this.tokens.issueTokens({
-      userId: user.id,
-      sessionId: session.id,
-      ipAddress: context.ipAddress,
-      userAgent: context.userAgent,
-    });
+      return this.tokens.issueTokens({
+        userId: user.id,
+        sessionId: session.id,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+      });
+    } catch (error) {
+      await this.security.recordFailedSocialLogin(identifiers);
+      throw error;
+    }
   }
+
 
 }
