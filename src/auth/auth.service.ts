@@ -61,32 +61,23 @@ export class AuthService {
       ipAddress: request.ipAddress,
     });
 
-    try {
-      const result = await this.credentials.login(request);
+    const result = await this.credentials.login(request);
 
-      await this.security.clearLoginFailures(
-        email,
-        request.ipAddress,
-      );
+    await this.security.clearLoginFailures(
+      email,
+      request.ipAddress,
+    );
 
-      if ('mfaRequired' in result) {
-        return result;
-      }
-
-      return this.tokens.issueTokens({
-        userId: result.userId,
-        sessionId: result.sessionId,
-        ipAddress: request.ipAddress,
-        userAgent: request.userAgent,
-      });
-    } catch (error) {
-      await this.security.recordFailedLogin({
-        email,
-        ipAddress: request.ipAddress,
-        userAgent: request.userAgent,
-      });
-      throw error;
+    if ('mfaRequired' in result) {
+      return result;
     }
+
+    return this.tokens.issueTokens({
+      userId: result.userId,
+      sessionId: result.sessionId,
+      ipAddress: request.ipAddress,
+      userAgent: request.userAgent,
+    });
   }
 
   async completeMfa(request: {
