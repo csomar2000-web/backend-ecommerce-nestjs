@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import * as Joi from 'joi';
-
+import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
@@ -39,6 +39,7 @@ import { HttpErrorShapeFilter } from './common/filters/http-exception.filter';
         },
       ],
     }),
+    HealthModule,
     PrismaModule,
     AuthModule,
     NewsletterModule,
