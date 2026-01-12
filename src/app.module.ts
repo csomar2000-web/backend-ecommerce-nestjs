@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import * as Joi from 'joi';
 
 import { PrismaModule } from './prisma/prisma.module';
@@ -11,6 +11,7 @@ import { MessagesModule } from './message/messages.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
+import { HttpErrorShapeFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
@@ -40,6 +41,11 @@ import { RolesGuard } from './auth/guards/roles.guard';
   ],
 
   providers: [
+    {
+      provide: APP_FILTER,
+      useClass: HttpErrorShapeFilter,
+    },
+
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
