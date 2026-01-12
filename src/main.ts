@@ -14,7 +14,8 @@ async function bootstrap() {
   });
 
   const appLogger = app.get(Logger);
-  const pinoLogger = await app.resolve(PinoLogger); // ✅ FIX
+
+  const pinoLogger = await app.resolve(PinoLogger);
 
   app.useLogger(appLogger);
   app.enableShutdownHooks();
@@ -51,4 +52,5 @@ async function bootstrap() {
 
   appLogger.log(`Server running on http://localhost:${port}`);
 }
+
 bootstrap();
