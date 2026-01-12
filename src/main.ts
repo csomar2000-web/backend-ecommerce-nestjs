@@ -1,14 +1,14 @@
-import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ConfigService } from '@nestjs/config';
+import { ValidationPipe } from '@nestjs/common';
+import { HttpErrorShapeFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
   });
 
-  const config = app.get(ConfigService);
+  app.useGlobalFilters(new HttpErrorShapeFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -21,17 +21,8 @@ async function bootstrap() {
     }),
   );
 
-  app.enableShutdownHooks();
-
-  app.enableCors({
-    origin: config.get<string>('CORS_ORIGIN')?.split(',') ?? true,
-    credentials: true,
-  });
-
   app.setGlobalPrefix('api');
 
-  const port = config.get<number>('PORT') ?? 3000;
-  await app.listen(port);
+  await app.listen(3000);
 }
-
 bootstrap();
