@@ -13,12 +13,14 @@ async function bootstrap() {
     bodyParser: false,
   });
 
-  const appLogger = app.get(Logger);       
-  const pinoLogger = app.get(PinoLogger);  
+  const appLogger = app.get(Logger);
+  const pinoLogger = await app.resolve(PinoLogger); // ✅ FIX
 
   app.useLogger(appLogger);
   app.enableShutdownHooks();
+
   app.useGlobalFilters(new HttpErrorShapeFilter(pinoLogger));
+
   app.use(helmet());
   app.enableCors({
     origin: process.env.CORS_ORIGIN
@@ -26,9 +28,11 @@ async function bootstrap() {
       : '*',
     credentials: true,
   });
+
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -39,11 +43,12 @@ async function bootstrap() {
       },
     }),
   );
+
   app.setGlobalPrefix('api');
+
   const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
 
   appLogger.log(`Server running on http://localhost:${port}`);
 }
-
 bootstrap();

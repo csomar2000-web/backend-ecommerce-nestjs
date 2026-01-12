@@ -6,7 +6,6 @@ import type { StringValue } from 'ms';
 
 @Module({
   imports: [
-    ConfigModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -22,4 +21,4 @@ import type { StringValue } from 'ms';
   providers: [TokenService],
   exports: [TokenService],
 })
-export class TokenModule {}
+export class TokenModule { }
