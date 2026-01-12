@@ -8,7 +8,6 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
-  app.useGlobalFilters(new HttpErrorShapeFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({
