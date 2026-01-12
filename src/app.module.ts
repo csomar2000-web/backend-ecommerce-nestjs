@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
-import * as Joi from 'joi';
+
+import { AppConfigModule } from './config/app-config.module';
+import { LoggingModule } from './config/logging.module';
+import { RateLimitModule } from './config/rate-limit.module';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
@@ -14,42 +15,19 @@ import { RolesGuard } from './auth/guards/roles.guard';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      validationSchema: Joi.object({
-        JWT_ACCESS_SECRET: Joi.string().min(32).required(),
-        JWT_ACCESS_TTL: Joi.string().required(),
-        JWT_REFRESH_TTL: Joi.string().required(),
-      }),
-    }),
-
-    ThrottlerModule.forRoot({
-      throttlers: [
-        {
-          name: 'default',
-          ttl: 60,
-          limit: 20,
-        },
-      ],
-    }),
-
+    AppConfigModule,
+    LoggingModule,
+    RateLimitModule,
     PrismaModule,
     AuthModule,
     NewsletterModule,
     MessagesModule,
   ],
-
   providers: [
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
-
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
