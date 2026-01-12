@@ -2,19 +2,39 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { LoggerModule } from 'nestjs-pino';
 import * as Joi from 'joi';
+import * as crypto from 'crypto';
+
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
 import { MessagesModule } from './message/messages.module';
-
+import { MetricsModule } from './metrics/metrics.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { HttpErrorShapeFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
+    LoggerModule.forRoot({
+      pinoHttp: {
+        level:
+          process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+        genReqId: (req) =>
+          req.headers['x-request-id'] ?? crypto.randomUUID(),
+        serializers: {
+          req(req) {
+            return {
+              id: req.id,
+              method: req.method,
+              url: req.url,
+            };
+          },
+        },
+      },
+    }),
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: Joi.object({
@@ -40,6 +60,7 @@ import { HttpErrorShapeFilter } from './common/filters/http-exception.filter';
       ],
     }),
     HealthModule,
+    MetricsModule,
     PrismaModule,
     AuthModule,
     NewsletterModule,

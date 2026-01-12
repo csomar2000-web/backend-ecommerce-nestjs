@@ -4,19 +4,19 @@ import {
     ExceptionFilter,
     HttpException,
     HttpStatus,
-    Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { PinoLogger } from 'nestjs-pino';
 
 @Catch()
 export class HttpErrorShapeFilter implements ExceptionFilter {
-    private readonly logger = new Logger(HttpErrorShapeFilter.name);
+    constructor(private readonly logger: PinoLogger) { }
 
     catch(exception: unknown, host: ArgumentsHost): void {
         const ctx = host.switchToHttp();
         const response = ctx.getResponse<Response>();
-        const request = ctx.getRequest<Request>();
+        const request = ctx.getRequest<Request & { id?: string }>();
 
         let status = HttpStatus.INTERNAL_SERVER_ERROR;
         let code = 'INTERNAL_SERVER_ERROR';
@@ -30,18 +30,17 @@ export class HttpErrorShapeFilter implements ExceptionFilter {
         } else if (exception instanceof HttpException) {
             status = exception.getStatus();
             const res = exception.getResponse() as any;
-
-            if (typeof res === 'string') {
-                message = res;
-            } else if (res?.message) {
-                message = Array.isArray(res.message) ? res.message : res.message;
-            }
-
+            message = res?.message ?? message;
             code = this.mapHttpStatusToCode(status);
         } else {
             this.logger.error(
-                `${request.method} ${request.originalUrl}`,
-                exception instanceof Error ? exception.stack : String(exception),
+                {
+                    err: exception,
+                    requestId: request.id,
+                    method: request.method,
+                    path: request.originalUrl,
+                },
+                'Unhandled exception',
             );
         }
 
@@ -84,21 +83,18 @@ export class HttpErrorShapeFilter implements ExceptionFilter {
                     code: 'CONFLICT',
                     message: 'Resource already exists',
                 };
-
             case 'P2025':
                 return {
                     status: HttpStatus.NOT_FOUND,
                     code: 'NOT_FOUND',
                     message: 'Resource not found',
                 };
-
             case 'P2003':
                 return {
                     status: HttpStatus.BAD_REQUEST,
                     code: 'INVALID_REFERENCE',
                     message: 'Invalid relation reference',
                 };
-
             default:
                 return {
                     status: HttpStatus.INTERNAL_SERVER_ERROR,
