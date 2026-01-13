@@ -10,18 +10,9 @@ import { AuthProvider, MfaType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
-
-
-const PASSWORD_REGEX =
-  /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+import { isStrongPassword } from '../dto/common/password-rules';
 
 const MASTER_KEY = Buffer.from(process.env.MFA_SECRET_KEY!, 'hex');
-
-function assertStrongPassword(password: string) {
-  if (!PASSWORD_REGEX.test(password)) {
-    throw new BadRequestException('Weak password');
-  }
-}
 
 function encryptValue(value: string) {
   const iv = crypto.randomBytes(12);
@@ -60,7 +51,6 @@ function decryptValue(data: {
   return decrypted.toString('utf8');
 }
 
-
 @Injectable()
 export class AccountIdentityService {
   constructor(
@@ -68,23 +58,39 @@ export class AccountIdentityService {
     private readonly mailService: MailService,
   ) { }
 
-
   async register(params: {
     email: string;
     password: string;
     confirmPassword: string;
     phone?: string;
+    username?: string;
+    displayName?: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    const { email, password, confirmPassword, phone } = params;
+    const {
+      email,
+      password,
+      confirmPassword,
+      phone,
+      username,
+      displayName,
+    } = params;
+
     const normalizedEmail = email.toLowerCase().trim();
+    const normalizedUsername = username?.trim().toLowerCase();
+    const resolvedDisplayName =
+      displayName?.trim() || normalizedUsername || undefined;
 
     if (password !== confirmPassword) {
       throw new BadRequestException('Passwords do not match');
     }
 
-    assertStrongPassword(password);
+    if (!isStrongPassword(password)) {
+      throw new BadRequestException(
+        'Password does not meet strength requirements',
+      );
+    }
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
@@ -94,13 +100,24 @@ export class AccountIdentityService {
       throw new ConflictException('Email already in use');
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    if (normalizedUsername) {
+      const existingUsername = await this.prisma.user.findUnique({
+        where: { username: normalizedUsername },
+      });
 
-    const encryptedPhone = phone ? encryptValue(phone) : null;
+      if (existingUsername) {
+        throw new ConflictException('Username already in use');
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const encryptedPhone = phone ? encryptValue(phone.trim()) : null;
 
     const user = await this.prisma.user.create({
       data: {
         email: normalizedEmail,
+        username: normalizedUsername,
+        displayName: resolvedDisplayName,
         authAccounts: {
           create: {
             provider: AuthProvider.LOCAL,
@@ -140,7 +157,6 @@ export class AccountIdentityService {
 
     return { success: true };
   }
-
 
   async verifyEmail(token: string) {
     const hashedToken = this.hash(token);
@@ -320,7 +336,6 @@ export class AccountIdentityService {
 
     return { success: true };
   }
-
 
   private hash(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');

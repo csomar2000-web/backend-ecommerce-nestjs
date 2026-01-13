@@ -41,14 +41,15 @@ export class AuthController {
     private readonly accountIdentity: AccountIdentityService,
   ) { }
 
-  /* ----------------------------- Registration ----------------------------- */
-
   @Post('register')
   register(@Body() dto: RegisterDto, @Req() req: Request) {
     return this.auth.register({
       email: dto.email,
       password: dto.password,
+      confirmPassword: dto.confirmPassword,
       phoneNumber: dto.phoneNumber,
+      username: dto.username,
+      displayName: dto.displayName,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
@@ -63,8 +64,6 @@ export class AuthController {
   resendVerification(@Body() dto: ResendVerificationDto) {
     return this.auth.resendVerification(dto.email);
   }
-
-  /* --------------------------------- Login -------------------------------- */
 
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
@@ -85,8 +84,6 @@ export class AuthController {
     });
   }
 
-  /* ------------------------------- Logout --------------------------------- */
-
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   logout(@Req() req: any) {
@@ -105,8 +102,6 @@ export class AuthController {
       accessToken: this.extractAccessToken(req),
     });
   }
-
-  /* -------------------------- Password Reset ------------------------------- */
 
   @Post('password-reset')
   requestPasswordReset(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
@@ -127,8 +122,6 @@ export class AuthController {
     });
   }
 
-  /* -------------------------- Password Change ------------------------------ */
-
   @UseGuards(JwtAuthGuard)
   @Post('password-change')
   changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
@@ -140,8 +133,6 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
-
-  /* ------------------------------ Sessions -------------------------------- */
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
@@ -160,8 +151,6 @@ export class AuthController {
     });
   }
 
-  /* ------------------------------ OAuth ----------------------------------- */
-
   @Post('google')
   googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
     return this.auth.loginWithGoogle({
@@ -179,8 +168,6 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
-
-  /* -------------------------------- MFA ----------------------------------- */
 
   @UseGuards(JwtAuthGuard)
   @Post('mfa/setup')
@@ -210,8 +197,6 @@ export class AuthController {
   ) {
     return this.auth.completeMfa(dto);
   }
-
-  /* ------------------------------ Helpers --------------------------------- */
 
   private extractAccessToken(req: Request): string {
     const header = req.headers.authorization;

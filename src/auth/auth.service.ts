@@ -34,12 +34,19 @@ export class AuthService {
     private readonly facebookAuth: FacebookAuthService,
   ) { }
 
-  register(request: RegisterRequest) {
+  async register(request: RegisterRequest) {
+    await this.security.assertRegistrationAllowed({
+      email: request.email,
+      ipAddress: request.ipAddress,
+    });
+
     return this.accountIdentity.register({
       email: request.email,
       password: request.password,
-      confirmPassword: request.password,
+      confirmPassword: request.confirmPassword,
       phone: request.phoneNumber,
+      username: request.username,
+      displayName: request.displayName,
       ipAddress: request.ipAddress,
       userAgent: request.userAgent,
     });
@@ -63,10 +70,7 @@ export class AuthService {
 
     const result = await this.credentials.login(request);
 
-    await this.security.clearLoginFailures(
-      email,
-      request.ipAddress,
-    );
+    await this.security.clearLoginFailures(email, request.ipAddress);
 
     if ('mfaRequired' in result) {
       return result;
@@ -160,7 +164,6 @@ export class AuthService {
     return this.handleSocialLogin(AuthProvider.GOOGLE, profile, request);
   }
 
-
   async loginWithFacebook(request: {
     accessToken: string;
     ipAddress: string;
@@ -249,6 +252,4 @@ export class AuthService {
       throw error;
     }
   }
-
-
 }

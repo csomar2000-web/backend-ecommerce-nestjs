@@ -1,10 +1,12 @@
 import { RequestContext } from './request-context.type';
 
-
 export interface RegisterRequest extends RequestContext {
     email: string;
     password: string;
-    phoneNumber: string;
+    confirmPassword: string;
+    phoneNumber?: string;
+    username?: string;
+    displayName?: string;
 }
 
 export interface LoginRequest extends RequestContext {

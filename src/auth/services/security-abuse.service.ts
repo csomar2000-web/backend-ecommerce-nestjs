@@ -6,6 +6,9 @@ const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MINUTES = 15;
 const BLOCK_MINUTES = 30;
 
+const REGISTRATION_LIMIT = 5;
+const REGISTRATION_WINDOW_MINUTES = 60;
+
 const SENSITIVE_LIMIT = 3;
 const SENSITIVE_WINDOW_MINUTES = 60;
 
@@ -24,6 +27,14 @@ function passwordLoginIdentifiers(email: string, ip: string) {
     `login:email:${email}`,
     `login:ip:${ip}`,
     `login:email_ip:${email}:${ip}`,
+  ];
+}
+
+function registrationIdentifiers(email: string, ip: string) {
+  return [
+    `register:email:${email}`,
+    `register:ip:${ip}`,
+    `register:email_ip:${email}:${ip}`,
   ];
 }
 
@@ -48,10 +59,9 @@ function socialLoginIdentifiers(params: {
   return ids;
 }
 
-
 @Injectable()
 export class SecurityAbuseService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   private async assertIdentifiersAllowed(identifiers: string[]) {
     const now = new Date();
@@ -87,25 +97,29 @@ export class SecurityAbuseService {
     }
   }
 
-  private async recordFailure(identifiers: string[]) {
+  private async recordFailure(
+    identifiers: string[],
+    action: 'LOGIN' | 'REGISTER',
+    windowMinutes: number,
+  ) {
     const now = new Date();
-    const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
+    const windowStart = bucket(now, windowMinutes);
 
     for (const identifier of identifiers) {
       await this.prisma.rateLimit.upsert({
         where: {
           identifier_action_windowStart: {
             identifier,
-            action: 'LOGIN',
+            action,
             windowStart,
           },
         },
         create: {
           identifier,
-          action: 'LOGIN',
+          action,
           windowStart,
           expiresAt: new Date(
-            windowStart.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
+            windowStart.getTime() + windowMinutes * 60 * 1000,
           ),
           count: 1,
         },
@@ -116,7 +130,6 @@ export class SecurityAbuseService {
     }
   }
 
-
   async assertLoginAllowed(params: { email: string; ipAddress: string }) {
     const ids = passwordLoginIdentifiers(
       params.email,
@@ -125,15 +138,12 @@ export class SecurityAbuseService {
     await this.assertIdentifiersAllowed(ids);
   }
 
-  async recordFailedLogin(params: {
-    email: string;
-    ipAddress: string;
-  }) {
+  async recordFailedLogin(params: { email: string; ipAddress: string }) {
     const ids = passwordLoginIdentifiers(
       params.email,
       params.ipAddress,
     );
-    await this.recordFailure(ids);
+    await this.recordFailure(ids, 'LOGIN', LOGIN_WINDOW_MINUTES);
   }
 
   async clearLoginFailures(email: string, ipAddress: string) {
@@ -147,12 +157,51 @@ export class SecurityAbuseService {
     });
   }
 
+  async assertRegistrationAllowed(params: {
+    email: string;
+    ipAddress: string;
+  }) {
+    const now = new Date();
+    const windowStart = bucket(now, REGISTRATION_WINDOW_MINUTES);
+
+    const ids = registrationIdentifiers(
+      params.email.toLowerCase().trim(),
+      params.ipAddress,
+    );
+
+    for (const identifier of ids) {
+      const record = await this.prisma.rateLimit.findUnique({
+        where: {
+          identifier_action_windowStart: {
+            identifier,
+            action: 'REGISTER',
+            windowStart,
+          },
+        },
+      });
+
+      if ((record?.count ?? 0) >= REGISTRATION_LIMIT) {
+        throw new ForbiddenException('Too many registration attempts');
+      }
+
+      await this.recordFailure(
+        [identifier],
+        'REGISTER',
+        REGISTRATION_WINDOW_MINUTES,
+      );
+    }
+  }
+
   async assertSocialLoginAllowed(identifiers: string[]) {
     await this.assertIdentifiersAllowed(identifiers);
   }
 
   async recordFailedSocialLogin(identifiers: string[]) {
-    await this.recordFailure(identifiers);
+    await this.recordFailure(
+      identifiers,
+      'LOGIN',
+      LOGIN_WINDOW_MINUTES,
+    );
   }
 
   buildSocialIdentifiers(params: {
@@ -190,7 +239,6 @@ export class SecurityAbuseService {
       },
     });
   }
-
 
   async assertSensitiveActionAllowed(params: {
     identifier: string;
