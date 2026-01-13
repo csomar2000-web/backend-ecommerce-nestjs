@@ -8,7 +8,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+
+import { Public } from '../common/decorators/public.decorator';
 import { RegisterRateLimitGuard } from './guards/register-rate-limit.guard';
+
 import { AuthService } from './auth.service';
 import { AccountIdentityService } from './services/account-identity.service';
 
@@ -41,6 +44,7 @@ export class AuthController {
     private readonly accountIdentity: AccountIdentityService,
   ) { }
 
+  @Public()
   @Post('register')
   @UseGuards(RegisterRateLimitGuard)
   register(@Body() dto: RegisterDto, @Req() req: Request) {
@@ -56,16 +60,19 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('verify-email')
   verifyEmail(@Body() dto: VerifyEmailDto) {
     return this.auth.verifyEmail(dto.token);
   }
 
+  @Public()
   @Post('resend-verification')
   resendVerification(@Body() dto: ResendVerificationDto) {
     return this.auth.resendVerification(dto.email);
   }
 
+  @Public()
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.auth.login({
@@ -76,6 +83,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
     return this.auth.refresh({
@@ -104,6 +112,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('password-reset')
   requestPasswordReset(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     return this.auth.requestPasswordReset({
@@ -113,6 +122,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('password-reset/confirm')
   confirmPasswordReset(@Body() dto: ResetPasswordDto, @Req() req: Request) {
     return this.auth.confirmPasswordReset({
@@ -152,6 +162,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('google')
   googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
     return this.auth.loginWithGoogle({
@@ -161,6 +172,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('facebook')
   facebookAuth(@Body() dto: FacebookAuthDto, @Req() req: Request) {
     return this.auth.loginWithFacebook({
@@ -185,6 +197,7 @@ export class AuthController {
     });
   }
 
+  @Public()
   @Post('mfa/complete')
   completeMfa(
     @Body()
