@@ -1,16 +1,24 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthProvider } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 
-const LOGIN_LIMIT = 5;
-const LOGIN_WINDOW_MINUTES = 15;
-const BLOCK_MINUTES = 30;
+const DEFAULT_LOGIN_LIMIT = 5;
+const DEFAULT_LOGIN_WINDOW_MINUTES = 15;
+const DEFAULT_LOGIN_BLOCK_MINUTES = 30;
 
-const REGISTRATION_LIMIT = 5;
-const REGISTRATION_WINDOW_MINUTES = 60;
+const DEFAULT_REGISTRATION_LIMIT = 5;
+const DEFAULT_REGISTRATION_WINDOW_MINUTES = 60;
+const DEFAULT_REGISTRATION_BLOCK_MINUTES = 30;
 
-const SENSITIVE_LIMIT = 3;
-const SENSITIVE_WINDOW_MINUTES = 60;
+const DEFAULT_SENSITIVE_LIMIT = 3;
+const DEFAULT_SENSITIVE_WINDOW_MINUTES = 60;
 
 type SensitiveActionType =
   | 'PASSWORD_RESET'
@@ -61,11 +69,75 @@ function socialLoginIdentifiers(params: {
 
 @Injectable()
 export class SecurityAbuseService {
-  constructor(private readonly prisma: PrismaService) { }
+  private readonly logger = new Logger(SecurityAbuseService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) { }
+
+  private getNumber(key: string, fallback: number) {
+    const value = this.config.get<number>(key);
+    return value === undefined || value === null ? fallback : Number(value);
+  }
+
+  private get loginLimit() {
+    return this.getNumber('LOGIN_LIMIT', DEFAULT_LOGIN_LIMIT);
+  }
+
+  private get loginWindowMinutes() {
+    return this.getNumber(
+      'LOGIN_WINDOW_MINUTES',
+      DEFAULT_LOGIN_WINDOW_MINUTES,
+    );
+  }
+
+  private get loginBlockMinutes() {
+    return this.getNumber(
+      'LOGIN_BLOCK_MINUTES',
+      DEFAULT_LOGIN_BLOCK_MINUTES,
+    );
+  }
+
+  private get registrationLimit() {
+    return this.getNumber(
+      'REGISTRATION_LIMIT',
+      DEFAULT_REGISTRATION_LIMIT,
+    );
+  }
+
+  private get registrationWindowMinutes() {
+    return this.getNumber(
+      'REGISTRATION_WINDOW_MINUTES',
+      DEFAULT_REGISTRATION_WINDOW_MINUTES,
+    );
+  }
+
+  private get registrationBlockMinutes() {
+    return this.getNumber(
+      'REGISTRATION_BLOCK_MINUTES',
+      DEFAULT_REGISTRATION_BLOCK_MINUTES,
+    );
+  }
+
+  private get sensitiveLimit() {
+    return this.getNumber('SENSITIVE_LIMIT', DEFAULT_SENSITIVE_LIMIT);
+  }
+
+  private get sensitiveWindowMinutes() {
+    return this.getNumber(
+      'SENSITIVE_WINDOW_MINUTES',
+      DEFAULT_SENSITIVE_WINDOW_MINUTES,
+    );
+  }
+
+  private secondsUntil(date: Date, now = new Date()) {
+    return Math.max(1, Math.ceil((date.getTime() - now.getTime()) / 1000));
+  }
 
   private async assertIdentifiersAllowed(identifiers: string[]) {
     const now = new Date();
-    const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
+    const windowStart = bucket(now, this.loginWindowMinutes);
 
     for (const identifier of identifiers) {
       const activeBlock = await this.prisma.rateLimit.findFirst({
@@ -90,8 +162,8 @@ export class SecurityAbuseService {
         },
       });
 
-      if ((record?.count ?? 0) >= LOGIN_LIMIT) {
-        await this.blockIdentifier(identifier);
+      if ((record?.count ?? 0) >= this.loginLimit) {
+        await this.blockLoginIdentifier(identifier, now);
         throw new ForbiddenException('Temporarily blocked');
       }
     }
@@ -143,7 +215,7 @@ export class SecurityAbuseService {
       params.email,
       params.ipAddress,
     );
-    await this.recordFailure(ids, 'LOGIN', LOGIN_WINDOW_MINUTES);
+    await this.recordFailure(ids, 'LOGIN', this.loginWindowMinutes);
   }
 
   async clearLoginFailures(email: string, ipAddress: string) {
@@ -162,7 +234,7 @@ export class SecurityAbuseService {
     ipAddress: string;
   }) {
     const now = new Date();
-    const windowStart = bucket(now, REGISTRATION_WINDOW_MINUTES);
+    const windowStart = bucket(now, this.registrationWindowMinutes);
 
     const ids = registrationIdentifiers(
       params.email.toLowerCase().trim(),
@@ -170,6 +242,24 @@ export class SecurityAbuseService {
     );
 
     for (const identifier of ids) {
+      const activeBlock = await this.prisma.rateLimit.findFirst({
+        where: {
+          identifier,
+          action: 'REGISTER_BLOCK',
+          expiresAt: { gt: now },
+        },
+      });
+
+      if (activeBlock) {
+        throw new HttpException(
+          {
+            message: 'Too many registration attempts',
+            retryAfterSeconds: this.secondsUntil(activeBlock.expiresAt, now),
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
       const record = await this.prisma.rateLimit.findUnique({
         where: {
           identifier_action_windowStart: {
@@ -180,14 +270,21 @@ export class SecurityAbuseService {
         },
       });
 
-      if ((record?.count ?? 0) >= REGISTRATION_LIMIT) {
-        throw new ForbiddenException('Too many registration attempts');
+      if ((record?.count ?? 0) >= this.registrationLimit) {
+        const block = await this.blockRegistrationIdentifier(identifier, now);
+        throw new HttpException(
+          {
+            message: 'Too many registration attempts',
+            retryAfterSeconds: this.secondsUntil(block.expiresAt, now),
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
       }
 
       await this.recordFailure(
         [identifier],
         'REGISTER',
-        REGISTRATION_WINDOW_MINUTES,
+        this.registrationWindowMinutes,
       );
     }
   }
@@ -200,7 +297,7 @@ export class SecurityAbuseService {
     await this.recordFailure(
       identifiers,
       'LOGIN',
-      LOGIN_WINDOW_MINUTES,
+      this.loginWindowMinutes,
     );
   }
 
@@ -213,9 +310,11 @@ export class SecurityAbuseService {
     return socialLoginIdentifiers(params);
   }
 
-  async blockIdentifier(identifier: string) {
-    const now = new Date();
-    const windowStart = bucket(now, BLOCK_MINUTES);
+  private async blockLoginIdentifier(identifier: string, now: Date) {
+    const windowStart = bucket(now, this.loginBlockMinutes);
+    const expiresAt = new Date(
+      windowStart.getTime() + this.loginBlockMinutes * 60 * 1000,
+    );
 
     await this.prisma.rateLimit.upsert({
       where: {
@@ -229,15 +328,45 @@ export class SecurityAbuseService {
         identifier,
         action: 'LOGIN_BLOCK',
         windowStart,
-        expiresAt: new Date(
-          windowStart.getTime() + BLOCK_MINUTES * 60 * 1000,
-        ),
+        expiresAt,
         count: 1,
       },
       update: {
         count: { increment: 1 },
       },
     });
+
+    this.logger.warn(`Login identifier blocked: ${identifier}`);
+  }
+
+  private async blockRegistrationIdentifier(identifier: string, now: Date) {
+    const windowStart = bucket(now, this.registrationBlockMinutes);
+    const expiresAt = new Date(
+      windowStart.getTime() + this.registrationBlockMinutes * 60 * 1000,
+    );
+
+    const record = await this.prisma.rateLimit.upsert({
+      where: {
+        identifier_action_windowStart: {
+          identifier,
+          action: 'REGISTER_BLOCK',
+          windowStart,
+        },
+      },
+      create: {
+        identifier,
+        action: 'REGISTER_BLOCK',
+        windowStart,
+        expiresAt,
+        count: 1,
+      },
+      update: {
+        count: { increment: 1 },
+      },
+    });
+
+    this.logger.warn(`Registration identifier blocked: ${identifier}`);
+    return record;
   }
 
   async assertSensitiveActionAllowed(params: {
@@ -245,7 +374,7 @@ export class SecurityAbuseService {
     type: SensitiveActionType;
   }) {
     const now = new Date();
-    const windowStart = bucket(now, SENSITIVE_WINDOW_MINUTES);
+    const windowStart = bucket(now, this.sensitiveWindowMinutes);
 
     const record = await this.prisma.rateLimit.findUnique({
       where: {
@@ -257,7 +386,7 @@ export class SecurityAbuseService {
       },
     });
 
-    if ((record?.count ?? 0) >= SENSITIVE_LIMIT) {
+    if ((record?.count ?? 0) >= this.sensitiveLimit) {
       throw new ForbiddenException('Too many requests');
     }
 
@@ -274,7 +403,8 @@ export class SecurityAbuseService {
         action: params.type,
         windowStart,
         expiresAt: new Date(
-          windowStart.getTime() + SENSITIVE_WINDOW_MINUTES * 60 * 1000,
+          windowStart.getTime() +
+          this.sensitiveWindowMinutes * 60 * 1000,
         ),
         count: 1,
       },

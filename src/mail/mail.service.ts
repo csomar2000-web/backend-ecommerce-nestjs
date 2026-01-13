@@ -38,6 +38,18 @@ export class MailService {
         });
     }
 
+    async sendTestEmail(email: string): Promise<void> {
+        const sentAt = new Date().toISOString();
+
+        await this.send({
+            to: email,
+            subject: 'Test email delivery',
+            template: 'test-email',
+            context: { email, sentAt },
+            text: `Test email sent to ${email} at ${sentAt}`,
+        });
+    }
+
     async sendSecurityAlert(
         email: string,
         params: {
