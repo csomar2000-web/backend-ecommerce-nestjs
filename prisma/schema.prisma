@@ -1,6 +1,7 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 generator erd {
   provider = "prisma-erd-generator"
   output   = "..svg"
@@ -11,10 +12,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-////////////////////////
-// USER (IDENTITY)
-////////////////////////
-
 model User {
   id          String     @id @default(cuid())
   email       String     @unique
@@ -22,6 +19,7 @@ model User {
   firstName   String?
   lastName    String?
   displayName String?
+  userType    UserType   @default(CUSTOMER)
   status      UserStatus @default(ACTIVE)
   lastLoginAt DateTime?
   deletedAt   DateTime?
@@ -38,19 +36,29 @@ model User {
   customerProfile      CustomerProfile?
   workerProfile        WorkerProfile?
   businessOwnerProfile BusinessOwnerProfile?
-  addresses UserAddress[]
-  mfaFactors         MfaFactor[]
-  auditLogs          UserAuditLog[]
-  passwordResets     PasswordReset[]
-  emailVerifications EmailVerification[]
-
-  repliedMessages ContactMessage[]      @relation("LastRepliedBy")
-  messageReplies  ContactMessageReply[]
+  addresses            UserAddress[]
+  mfaFactors           MfaFactor[]
+  auditLogs            UserAuditLog[]
+  passwordResets       PasswordReset[]
+  emailVerifications   EmailVerification[]
+  repliedMessages      ContactMessage[]          @relation("LastRepliedBy")
+  messageReplies       ContactMessageReply[]
+  verifiedCompanies    CompanyVerificationAudit[] @relation("VerifiedBy")
+  verifiedDocuments    DocumentVerificationAudit[]
 
   @@index([email])
   @@index([status])
   @@index([deletedAt])
+  @@index([userType])
+  @@index([userType, deletedAt])
   @@map("users")
+}
+
+enum UserType {
+  CUSTOMER
+  ADMIN
+  WORKER
+  BUSINESS_OWNER
 }
 
 enum UserStatus {
@@ -59,29 +67,48 @@ enum UserStatus {
   DELETED
 }
 
-model UserAddress {
-  id          String      @id @default(cuid())
-  userId      String
-  type        AddressType @default(SHIPPING)
+model Address {
+  id           String    @id @default(cuid())
+  addressType  String
+  line1        String
+  line2        String?
+  city         String
+  state        String?
+  postalCode   String
+  country      String
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean   @default(false)
+  verifiedAt   DateTime?
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  line1       String
-  line2       String?
-  city        String
-  state       String?
-  postalCode  String
-  country     String
+  userAddresses        UserAddress[]
+  customerProfiles     CustomerProfile[]
+  businessOwnerProfiles BusinessOwnerProfile[]
+  companies            Company[]
 
-  isDefault   Boolean     @default(false)
-  verifiedAt  DateTime?
-  deletedAt   DateTime?
-
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, deletedAt])
   @@index([country])
+  @@index([postalCode])
+  @@index([deletedAt])
+  @@map("addresses")
+}
+
+model UserAddress {
+  id        String      @id @default(cuid())
+  userId    String
+  addressId String
+  type      AddressType @default(SHIPPING)
+  deletedAt DateTime?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address Address @relation(fields: [addressId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, addressId, type])
+  @@index([userId, deletedAt])
   @@map("user_addresses")
 }
 
@@ -91,10 +118,6 @@ enum AddressType {
   HOME
   WORK
 }
-
-////////////////////////
-// AUTHENTICATION
-////////////////////////
 
 model AuthAccount {
   id           String       @id @default(cuid())
@@ -123,10 +146,6 @@ enum AuthProvider {
   APPLE
 }
 
-////////////////////////
-// SESSIONS
-////////////////////////
-
 model Session {
   id            String         @id @default(cuid())
   userId        String
@@ -138,9 +157,8 @@ model Session {
   revokedAt     DateTime?
   refreshTokens RefreshToken[]
   mfaChallenges MfaChallenge[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -149,10 +167,6 @@ model Session {
   @@index([sessionToken])
   @@map("sessions")
 }
-
-////////////////////////
-// PASSWORD MANAGEMENT
-////////////////////////
 
 model PasswordReset {
   id        String    @id @default(cuid())
@@ -187,95 +201,144 @@ model EmailVerification {
   @@map("email_verifications")
 }
 
-////////////////////////
-// PROFILES
-////////////////////////
-
 model CustomerProfile {
-  id              String    @id @default(cuid())
-  userId          String    @unique
-  phone           String?
-  phoneVerifiedAt DateTime?
-  birthDate       DateTime?
-  address         Json?
-  preferences     Json?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  phoneEncrypted        String?
+  phoneIv               String?
+  phoneTag              String?
+  phoneVerifiedAt       DateTime?
+  birthDateEncrypted    String?
+  birthDateIv           String?
+  birthDateTag          String?
+  primaryAddressId      String?
+  preferences           Json?
+  loyaltyPoints         Int       @default(0)
+  marketingConsent      Boolean   @default(false)
+  dataProcessingConsent Boolean   @default(true)
+  deletedAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  primaryAddress Address? @relation(fields: [primaryAddressId], references: [id], onDelete: SetNull)
 
-  @@index([phone])
+  @@index([deletedAt])
   @@map("customer_profiles")
 }
 
 model BusinessOwnerProfile {
-  id           String    @id @default(cuid())
-  userId       String    @unique
-  businessName String
-  taxId        String?   @unique
-  address      Json?
-  verifiedAt   DateTime?
-  verifiedBy   String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                       String    @id @default(cuid())
+  userId                   String    @unique
+  businessName             String
+  businessType             String?
+  taxIdEncrypted           String?
+  taxIdIv                  String?
+  taxIdTag                 String?
+  primaryAddressId         String?
+  businessPhoneEncrypted   String?
+  businessPhoneIv          String?
+  businessPhoneTag         String?
+  businessEmailEncrypted   String?
+  businessEmailIv          String?
+  businessEmailTag         String?
+  verifiedAt               DateTime?
+  verifiedBy               String?
+  kycStatus                KycStatus @default(PENDING)
+  kycCompletedAt           DateTime?
+  dataProcessingConsent    Boolean   @default(true)
+  deletedAt                DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companies Company[]
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  primaryAddress Address? @relation(fields: [primaryAddressId], references: [id], onDelete: SetNull)
+  companies      Company[]
 
-  @@index([taxId])
+  @@index([businessType])
+  @@index([kycStatus])
+  @@index([deletedAt])
   @@map("business_owner_profiles")
+}
+
+enum KycStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
 }
 
 model WorkerProfile {
   id           String    @id @default(cuid())
   userId       String    @unique
-  companyId    String
   position     String?
   department   String?
   employeeId   String?
   hiredAt      DateTime  @default(now())
   terminatedAt DateTime?
+  deletedAt    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([companyId, terminatedAt])
   @@index([employeeId])
+  @@index([terminatedAt])
+  @@index([deletedAt])
   @@map("worker_profiles")
 }
 
-////////////////////////
-// COMPANY
-////////////////////////
-
 model Company {
-  id                  String                   @id @default(cuid())
-  ownerId             String
-  name                String
-  slug                String                   @unique
-  description         String?
-  logo                String?
-  website             String?
-  industry            String?
-  status              CompanyStatus            @default(PENDING)
-  verifiedAt          DateTime?
-  suspendedAt         DateTime?
-  closedAt            DateTime?
-  deletedAt           DateTime?
-  metadata            Json?
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
+  id                           String                        @id @default(cuid())
+  ownerId                      String
+  name                         String
+  slug                         String                        @unique
+  legalName                    String
+  legalStatus                  CompanyLegalStatus            @default(ACTIVE)
+  registrationNumber           String
+  taxIdEncrypted               String?
+  taxIdIv                      String?
+  taxIdTag                     String?
+  legalRepresentativeEncrypted String?
+  legalRepresentativeIv        String?
+  legalRepresentativeTag       String?
+  countryOfIncorporation       String
+  incorporationDate            DateTime?
+  registeredAddressId          String
+  businessLicenseUrl           String?
+  taxCertificateUrl            String?
+  incorporationDocUrl          String?
+  otherDocumentsUrls           String[]                      @default([])
+  documentVerificationStatus   DocumentVerificationStatus    @default(PENDING)
+  description                  String?
+  logo                         String?
+  website                      String?
+  industry                     String?
+  status                       CompanyStatus                 @default(PENDING)
+  verifiedAt                   DateTime?
+  suspendedAt                  DateTime?
+  closedAt                     DateTime?
+  deletedAt                    DateTime?
+  metadata                     Json?
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+
+  owner               BusinessOwnerProfile       @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  registeredAddress   Address                    @relation(fields: [registeredAddressId], references: [id], onDelete: Restrict)
+  roleAssignments     UserRoleAssignment[]
   permissionOverrides UserPermissionOverride[]
+  verificationAudits  CompanyVerificationAudit[]
+  documentAudits      DocumentVerificationAudit[]
 
-  owner           BusinessOwnerProfile @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  workers         WorkerProfile[]
-  roleAssignments UserRoleAssignment[]
-
+  @@unique([registrationNumber, countryOfIncorporation])
   @@index([ownerId])
   @@index([status, deletedAt])
   @@index([slug])
+  @@index([registrationNumber])
+  @@index([countryOfIncorporation])
+  @@index([legalStatus])
+  @@index([documentVerificationStatus])
   @@map("companies")
 }
 
@@ -286,14 +349,71 @@ enum CompanyStatus {
   CLOSED
 }
 
-////////////////////////
-// ROLES & PERMISSIONS (RBAC)
-////////////////////////
+enum CompanyLegalStatus {
+  ACTIVE
+  DISSOLVED
+  LIQUIDATION
+  BANKRUPTCY
+  SUSPENDED
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  IN_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+model CompanyVerificationAudit {
+  id             String        @id @default(cuid())
+  companyId      String
+  verifiedById   String
+  previousStatus CompanyStatus
+  newStatus      CompanyStatus
+  notes          String?
+  documentsChecked String[]    @default([])
+  ipAddress      String?
+  createdAt      DateTime      @default(now())
+
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verifiedBy User    @relation("VerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@index([verifiedById])
+  @@index([createdAt])
+  @@map("company_verification_audits")
+}
+
+model DocumentVerificationAudit {
+  id                  String                     @id @default(cuid())
+  companyId           String
+  verifiedById        String
+  documentType        String
+  documentUrl         String
+  previousStatus      DocumentVerificationStatus
+  newStatus           DocumentVerificationStatus
+  rejectionReason     String?
+  expiryDate          DateTime?
+  notes               String?
+  ipAddress           String?
+  createdAt           DateTime                   @default(now())
+
+  company    Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verifiedBy User    @relation(fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@index([verifiedById])
+  @@index([documentType])
+  @@index([createdAt])
+  @@map("document_verification_audits")
+}
 
 model Role {
   id          String   @id @default(cuid())
   name        String   @unique
   description String?
+  userType    UserType?
   isSystem    Boolean  @default(true)
   isActive    Boolean  @default(true)
   metadata    Json?
@@ -304,6 +424,7 @@ model Role {
   users       UserRoleAssignment[]
 
   @@index([isSystem, isActive])
+  @@index([userType])
   @@map("roles")
 }
 
@@ -356,15 +477,17 @@ model UserRoleAssignment {
   @@map("user_role_assignments")
 }
 
-////////////////////////
-// GUEST CHECKOUT
-////////////////////////
-
 model GuestCheckout {
   id              String    @id @default(cuid())
   email           String
   sessionToken    String    @unique
+  firstName       String?
+  lastName        String?
+  phone           String?
+  shippingAddress Json?
+  billingAddress  Json?
   checkoutData    Json
+  orderIds        String[]  @default([])
   expiresAt       DateTime
   convertedUserId String?   @unique
   convertedAt     DateTime?
@@ -374,29 +497,25 @@ model GuestCheckout {
   @@index([email])
   @@index([expiresAt])
   @@index([convertedUserId])
+  @@index([sessionToken])
   @@map("guest_checkouts")
 }
 
-////////////////////////
-// MFA (Multi-Factor Authentication)
-////////////////////////
-
 model MfaFactor {
-  id     String  @id @default(cuid())
-  userId String
-  type   MfaType
-
+  id           String    @id @default(cuid())
+  userId       String
+  type         MfaType
   secretCipher String
   secretIv     String
   secretTag    String
-
-  verifiedAt DateTime?
-  lastUsedAt DateTime?
-  revokedAt  DateTime?
+  verifiedAt   DateTime?
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, type])
+  @@map("mfa_factors")
 }
 
 enum MfaType {
@@ -405,10 +524,6 @@ enum MfaType {
   EMAIL
   WEBAUTHN
 }
-
-////////////////////////
-// AUDIT LOGS
-////////////////////////
 
 model UserAuditLog {
   id           String   @id @default(cuid())
@@ -431,10 +546,6 @@ model UserAuditLog {
   @@index([createdAt])
   @@map("user_audit_logs")
 }
-
-////////////////////////
-// NOTIFICATIONS
-////////////////////////
 
 model Notification {
   id        String           @id @default(cuid())
@@ -459,10 +570,6 @@ enum NotificationType {
   COMPANY
   ALERT
 }
-
-////////////////////////
-// RATE LIMITING
-////////////////////////
 
 model RefreshToken {
   id        String    @id @default(cuid())
@@ -561,47 +668,33 @@ model UserPermissionOverride {
   @@map("user_permission_overrides")
 }
 
-////////////////////////
-// NewsletterSubscription
-////////////////////////
-
 model NewsletterSubscription {
-  id     String  @id @default(uuid())
-  email  String  @unique
-  active Boolean @default(true)
-
+  id             String    @id @default(uuid())
+  email          String    @unique
+  active         Boolean   @default(true)
   unsubscribedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@map("newsletter_subscriptions")
 }
 
-////////////////////////
-// ContactMessage
-////////////////////////
-
 model ContactMessage {
-  id String @id @default(cuid())
-
-  name    String
-  email   String
-  phone   String?
-  subject String?
-  message String
-
-  status MessageStatus @default(NEW)
-
+  id              String        @id @default(cuid())
+  name            String
+  email           String
+  phone           String?
+  subject         String?
+  message         String
+  status          MessageStatus @default(NEW)
   repliedAt       DateTime?
   lastRepliedById String?
-  lastRepliedBy   User?     @relation("LastRepliedBy", fields: [lastRepliedById], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  readAt          DateTime?
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  readAt    DateTime?
-
-  replies ContactMessageReply[]
+  lastRepliedBy User?                 @relation("LastRepliedBy", fields: [lastRepliedById], references: [id])
+  replies       ContactMessageReply[]
 
   @@index([email])
   @@index([status])
@@ -610,15 +703,14 @@ model ContactMessage {
 }
 
 model ContactMessageReply {
-  id               String @id @default(cuid())
+  id               String         @id @default(cuid())
   contactMessageId String
   authorId         String
-
-  content        String
-  sentVia        ReplyChannel   @default(EMAIL)
-  deliveryStatus DeliveryStatus @default(SENT)
-  sentAt         DateTime       @default(now())
-  createdAt      DateTime       @default(now())
+  content          String
+  sentVia          ReplyChannel   @default(EMAIL)
+  deliveryStatus   DeliveryStatus @default(SENT)
+  sentAt           DateTime       @default(now())
+  createdAt        DateTime       @default(now())
 
   contactMessage ContactMessage @relation(fields: [contactMessageId], references: [id], onDelete: Cascade)
   author         User           @relation(fields: [authorId], references: [id], onDelete: Restrict)
@@ -646,4 +738,22 @@ enum DeliveryStatus {
   SENT
   FAILED
   QUEUED
+}
+
+model RateLimit {
+  id           String    @id @default(cuid())
+  identifier   String
+  action       String
+  windowStart  DateTime
+  expiresAt    DateTime
+  count        Int       @default(0)
+  blockedUntil DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([identifier, action, windowStart], name: "identifier_action_windowStart")
+  @@index([identifier])
+  @@index([expiresAt])
+  @@index([blockedUntil])
+  @@map("rate_limits")
 }

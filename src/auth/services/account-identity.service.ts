@@ -11,10 +11,11 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
 
+
 const PASSWORD_REGEX =
   /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
-const MFA_KEY = Buffer.from(process.env.MFA_SECRET_KEY!, 'hex');
+const MASTER_KEY = Buffer.from(process.env.MFA_SECRET_KEY!, 'hex');
 
 function assertStrongPassword(password: string) {
   if (!PASSWORD_REGEX.test(password)) {
@@ -22,42 +23,43 @@ function assertStrongPassword(password: string) {
   }
 }
 
-function encrypt(secret: string) {
+function encryptValue(value: string) {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', MFA_KEY, iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', MASTER_KEY, iv);
 
   const encrypted = Buffer.concat([
-    cipher.update(secret, 'utf8'),
+    cipher.update(value, 'utf8'),
     cipher.final(),
   ]);
 
   return {
-    cipherText: encrypted.toString('base64'),
+    encrypted: encrypted.toString('base64'),
     iv: iv.toString('base64'),
-    authTag: cipher.getAuthTag().toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
   };
 }
 
-function decrypt(data: {
-  cipherText: string;
+function decryptValue(data: {
+  encrypted: string;
   iv: string;
-  authTag: string;
+  tag: string;
 }) {
   const decipher = crypto.createDecipheriv(
     'aes-256-gcm',
-    MFA_KEY,
+    MASTER_KEY,
     Buffer.from(data.iv, 'base64'),
   );
 
-  decipher.setAuthTag(Buffer.from(data.authTag, 'base64'));
+  decipher.setAuthTag(Buffer.from(data.tag, 'base64'));
 
   const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(data.cipherText, 'base64')),
+    decipher.update(Buffer.from(data.encrypted, 'base64')),
     decipher.final(),
   ]);
 
   return decrypted.toString('utf8');
 }
+
 
 @Injectable()
 export class AccountIdentityService {
@@ -65,6 +67,7 @@ export class AccountIdentityService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) { }
+
 
   async register(params: {
     email: string;
@@ -93,6 +96,8 @@ export class AccountIdentityService {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    const encryptedPhone = phone ? encryptValue(phone) : null;
+
     const user = await this.prisma.user.create({
       data: {
         email: normalizedEmail,
@@ -102,10 +107,17 @@ export class AccountIdentityService {
             providerId: normalizedEmail,
             passwordHash,
             isPrimary: true,
-            verifiedAt: null,
           },
         },
-        customerProfile: phone ? { create: { phone } } : undefined,
+        customerProfile: encryptedPhone
+          ? {
+            create: {
+              phoneEncrypted: encryptedPhone.encrypted,
+              phoneIv: encryptedPhone.iv,
+              phoneTag: encryptedPhone.tag,
+            },
+          }
+          : undefined,
       },
     });
 
@@ -129,6 +141,7 @@ export class AccountIdentityService {
     return { success: true };
   }
 
+
   async verifyEmail(token: string) {
     const hashedToken = this.hash(token);
 
@@ -136,7 +149,7 @@ export class AccountIdentityService {
       where: { token: hashedToken },
     });
 
-    if (!record || record.expiresAt < new Date() || record.verifiedAt !== null) {
+    if (!record || record.expiresAt < new Date() || record.verifiedAt) {
       throw new UnauthorizedException('Invalid verification token');
     }
 
@@ -173,20 +186,16 @@ export class AccountIdentityService {
       (a) => a.provider === AuthProvider.LOCAL,
     );
 
-    if (!localAccount || localAccount.verifiedAt !== null) {
+    if (!localAccount || localAccount.verifiedAt) {
       throw new BadRequestException('Account already verified');
     }
 
     const rawToken = crypto.randomBytes(48).toString('hex');
-    const hashedToken = this.hash(rawToken);
 
     await this.prisma.emailVerification.updateMany({
-      where: {
-        userId: user.id,
-        verifiedAt: null,
-      },
+      where: { userId: user.id, verifiedAt: null },
       data: {
-        token: hashedToken,
+        token: this.hash(rawToken),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
@@ -244,27 +253,24 @@ export class AccountIdentityService {
 
   async setupMfaTotp(userId: string) {
     const secret = speakeasy.generateSecret({ length: 20 });
-    const encrypted = encrypt(secret.base32);
+    const encrypted = encryptValue(secret.base32);
 
     await this.prisma.mfaFactor.upsert({
       where: {
-        userId_type: {
-          userId,
-          type: MfaType.TOTP,
-        },
+        userId_type: { userId, type: MfaType.TOTP },
       },
       update: {
-        secretCipher: encrypted.cipherText,
+        secretCipher: encrypted.encrypted,
         secretIv: encrypted.iv,
-        secretTag: encrypted.authTag,
+        secretTag: encrypted.tag,
         revokedAt: null,
       },
       create: {
         userId,
         type: MfaType.TOTP,
-        secretCipher: encrypted.cipherText,
+        secretCipher: encrypted.encrypted,
         secretIv: encrypted.iv,
-        secretTag: encrypted.authTag,
+        secretTag: encrypted.tag,
       },
     });
 
@@ -287,10 +293,10 @@ export class AccountIdentityService {
       throw new BadRequestException('MFA not initialized');
     }
 
-    const secret = decrypt({
-      cipherText: factor.secretCipher,
+    const secret = decryptValue({
+      encrypted: factor.secretCipher,
       iv: factor.secretIv,
-      authTag: factor.secretTag,
+      tag: factor.secretTag,
     });
 
     const valid = speakeasy.totp.verify({
@@ -314,6 +320,7 @@ export class AccountIdentityService {
 
     return { success: true };
   }
+
 
   private hash(value: string): string {
     return crypto.createHash('sha256').update(value).digest('hex');
