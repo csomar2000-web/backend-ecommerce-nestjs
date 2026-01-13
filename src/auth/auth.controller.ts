@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-
+import { RegisterRateLimitGuard } from './guards/register-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { AccountIdentityService } from './services/account-identity.service';
 
@@ -42,6 +42,7 @@ export class AuthController {
   ) { }
 
   @Post('register')
+  @UseGuards(RegisterRateLimitGuard)
   register(@Body() dto: RegisterDto, @Req() req: Request) {
     return this.auth.register({
       email: dto.email,

@@ -61,7 +61,7 @@ export class AccountIdentityService {
   async register(params: {
     email: string;
     password: string;
-    confirmPassword: string;
+    confirmPassword?: string;
     phone?: string;
     username?: string;
     displayName?: string;
@@ -82,7 +82,10 @@ export class AccountIdentityService {
     const resolvedDisplayName =
       displayName?.trim() || normalizedUsername || undefined;
 
-    if (password !== confirmPassword) {
+    if (
+      confirmPassword !== undefined &&
+      password !== confirmPassword
+    ) {
       throw new BadRequestException('Passwords do not match');
     }
 

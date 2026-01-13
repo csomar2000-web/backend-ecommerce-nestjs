@@ -18,11 +18,12 @@ export class RegisterDto {
   @StrongPassword()
   password: string;
 
+  @IsOptional()
   @IsString()
   @MatchFields('password', {
     message: 'Passwords do not match',
   })
-  confirmPassword: string;
+  confirmPassword?: string;
 
   @IsOptional()
   @IsPhoneNumber(undefined)
@@ -32,10 +33,7 @@ export class RegisterDto {
   @IsString()
   @MinLength(3)
   @MaxLength(30)
-  @Matches(/^[a-zA-Z0-9._-]+$/, {
-    message:
-      'Username can contain letters, numbers, dots, underscores, and dashes',
-  })
+  @Matches(/^[a-zA-Z0-9._-]+$/)
   username?: string;
 
   @IsOptional()

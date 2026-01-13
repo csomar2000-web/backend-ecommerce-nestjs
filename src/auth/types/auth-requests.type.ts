@@ -3,7 +3,7 @@ import { RequestContext } from './request-context.type';
 export interface RegisterRequest extends RequestContext {
     email: string;
     password: string;
-    confirmPassword: string;
+    confirmPassword?: string;
     phoneNumber?: string;
     username?: string;
     displayName?: string;
