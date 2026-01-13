@@ -1,4 +1,3 @@
-// smtp.provider.ts
 import nodemailer, { Transporter } from 'nodemailer';
 import { MailProvider } from '../mail.provider';
 
@@ -22,7 +21,14 @@ export class SmtpMailProvider implements MailProvider {
       socketTimeout: 10_000,
     });
 
-    this.transporter.verify();
+    this.transporter.verify()
+      .then(() => {
+        console.log('[MAIL] SMTP connection verified');
+      })
+      .catch((err) => {
+        console.error('[MAIL] SMTP verification failed:', err.message);
+      });
+
   }
 
   async send({
