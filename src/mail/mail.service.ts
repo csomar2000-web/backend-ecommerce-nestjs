@@ -46,20 +46,20 @@ export class MailService {
             userAgent: string;
         },
     ): Promise<void> {
-        const template =
-            params.type === 'NEW_DEVICE_LOGIN'
-                ? 'new-device-login'
-                : 'session-revoked';
+        const templateMap: Record<SecurityAlertType, string> = {
+            NEW_DEVICE_LOGIN: 'new-device-login',
+            SESSION_REVOKED: 'session-revoked',
+        };
 
-        const subject =
-            params.type === 'NEW_DEVICE_LOGIN'
-                ? 'New login detected'
-                : 'Session revoked';
+        const subjectMap: Record<SecurityAlertType, string> = {
+            NEW_DEVICE_LOGIN: 'New login detected',
+            SESSION_REVOKED: 'Session revoked',
+        };
 
         await this.send({
             to: email,
-            subject,
-            template,
+            subject: subjectMap[params.type],
+            template: templateMap[params.type],
             context: {
                 ipAddress: params.ipAddress,
                 userAgent: params.userAgent,
@@ -74,7 +74,7 @@ Device: ${params.userAgent}`,
         to: string;
         subject: string;
         template: string;
-        context: Record<string, any>;
+        context: Record<string, unknown>;
         text?: string;
     }): Promise<void> {
         const html = this.renderTemplate(
@@ -92,27 +92,19 @@ Device: ${params.userAgent}`,
 
     private renderTemplate(
         template: string,
-        context: Record<string, any>,
+        context: Record<string, unknown>,
     ): string {
-        const templatesDir = path.join(
-            process.cwd(),
-            'dist',
-            'mail',
-            'templates',
-        );
+        const candidates = [
+            path.join(process.cwd(), 'dist', 'mail', 'templates', `${template}.hbs`),
+            path.join(__dirname, 'templates', `${template}.hbs`),
+        ];
 
-        const fallbackDir = path.join(
-            __dirname,
-            'templates',
-        );
-
-        const filePath = fs.existsSync(
-            path.join(templatesDir, `${template}.hbs`),
-        )
-            ? path.join(templatesDir, `${template}.hbs`)
-            : path.join(fallbackDir, `${template}.hbs`);
+        const filePath = candidates.find((p) => fs.existsSync(p));
+        if (!filePath) {
+            throw new Error(`Mail template not found: ${template}`);
+        }
 
         const source = fs.readFileSync(filePath, 'utf8');
-        return Handlebars.compile(source)(context);
+        return Handlebars.compile(source, { strict: true })(context);
     }
 }
